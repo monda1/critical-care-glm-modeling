@@ -5,9 +5,6 @@ Este análisis utiliza la **eICU Collaborative Research Database** (versión dem
 ## Cómo Acceder
 
 1. Visita: https://eicu-crd.mit.edu/
-2. Completa la formación requerida (CITI Program)
-3. Firma el acuerdo de uso de datos
-4. Descarga la base de datos demo
 
 ## Archivos de Datos Utilizados
 
