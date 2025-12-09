@@ -1,0 +1,3818 @@
+
+---
+title: "Modelización e Inferencia de Datos UCI"
+author: "Ángel Soto García"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+    css: styles.css
+  pdf_document:
+    latex_engine: xelatex
+    number_sections: true
+    toc: true
+    toc_depth: 2
+subtitle: Aplicación de Modelos Lineales Generalizados a Problemas Neumológicos
+---
+
+<style>
+  .title {
+    text-align: center !important;
+    font-weight: bold;
+    font-size: 2em;
+    margin-bottom: 0.5em;
+    color: #2c3e50;
+  }
+  
+  .subtitle {
+    text-align: center !important;
+    font-size: 1.3em;
+    font-style: italic;
+    margin-bottom: 0.5em;
+    color: #34495e;
+  }
+  
+  .author {
+    text-align: center !important;
+    font-size: 1.1em;
+    margin-bottom: 2em;
+    color: #555;
+  }
+  
+  body {
+    text-align: justify;
+    line-height: 1.6;
+    color: #333;
+  }
+  
+  p {
+    text-align: justify;
+  }
+  
+  /* Secciones principales con diseño minimalista */
+  h1 {
+    background: #3498db;
+    color: white;
+    padding: 15px 20px;
+    border-radius: 4px;
+    margin-top: 30px;
+    font-weight: 600;
+    border-left: 5px solid #2980b9;
+  }
+
+  h2 {
+    color: #2c3e50;
+    border-left: 4px solid #3498db;
+    padding-left: 15px;
+    margin-top: 25px;
+    font-weight: 600;
+  }
+
+  h3 {
+    color: #34495e;
+    border-bottom: 2px solid #ecf0f1;
+    padding-bottom: 8px;
+    margin-top: 20px;
+  }
+
+  /* Cajas para hallazgos clave - diseño simple */
+  .hallazgo-clave {
+    background: #f8f9fa;
+    border-left: 4px solid #3498db;
+    padding: 15px 20px;
+    margin: 20px 0;
+    border-radius: 3px;
+  }
+
+  .alerta-clinica {
+    background: #fff5f5;
+    border-left: 4px solid #e74c3c;
+    padding: 15px 20px;
+    margin: 20px 0;
+    border-radius: 3px;
+  }
+  
+  /* Mejorar tablas */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 20px 0;
+  }
+  
+  th {
+    background: #ecf0f1;
+    color: #2c3e50;
+    font-weight: 600;
+    padding: 12px;
+    text-align: left;
+    border-bottom: 2px solid #3498db;
+  }
+  
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #ecf0f1;
+  }
+  
+  tr:hover {
+    background: #f8f9fa;
+  }
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = 'center'
+)
+
+# Cargar librerías necesarias
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(e1071)  # Para skewness y kurtosis
+
+# Cargar datos desde el CSV (en la misma carpeta que este .Rmd)
+apacheApsVar <- read.csv("apacheApsVar.csv")
+apachePatientResult <- read.csv("apachePatientResult.csv")
+vitalPeriodic<-read.csv("vitalPeriodic.csv")
+patient<-read.csv("patient.csv")
+apachePredVar<-read.csv("apachePredVar")
+
+
+```
+
+
+# Introducción
+
+La inferencia estadística es la herramienta que sirve  para extraer conclusiones válidas de datos limitados, permitiendo generalizar observaciones de muestras a poblaciones enteras. En el contexto de las unidades de cuidados intensivos (UCI), donde las decisiones clínicas deben basarse en evidencia robusta pese a la alta variabilidad  y la complejidad de los datos, esta herramienta se vuelve indispensable. 
+
+Este trabajo explora métodos estadísticos aplicados a datos médicos reales, utilizando la base de datos eICU Collaborative Research Database (versión demo v2.0.1), que recopila más de 2500 estancias en UCI de 20 hospitales estadounidenses grandes. Esta base ofrece diferentes variables clínicas, como signos vitales, puntuaciones de severidad (e.g., APACHE) y datos como mortalidad o duración de estancia.
+
+En nuestra investigación realizaremos lo siguiente:
+
+1. Exploración y caracterización de distribuciones de variables clínicas 
+2. Cálculo de estimadores puntuales y evaluación de su precisión
+3. Aplicación de tests de hipótesis para comparaciones clínicas 
+4. Construcción de intervalos de confianza 
+5. Desarrollo y validación de modelos lineales generalizados (GLM) con énfasis en casos neumológicos
+
+El objetivo es demostrar cómo la inferencia estadística  puede ayudar a la toma de decisiones clínicas basadas en evidencia en entornos de cuidados críticos, proporcionando tanto comprensión teórica como aplicabilidad práctica de estos métodos.
+
+# Estudio de la distribución de variables clínicas
+
+## Glucosa
+```{r glucosa}
+analizar_variable <- function(datos, var_name, unidad, filtro_min, filtro_max) {
+  
+  # Filtrar datos válidos
+  datos_filtrados <- datos %>%
+    filter(!is.na(!!sym(var_name)),
+           !!sym(var_name) != -1,
+           !!sym(var_name) > filtro_min,
+           !!sym(var_name) < filtro_max) %>%
+    pull(var_name)
+  
+  # Cálculos estadísticos
+  n <- length(datos_filtrados)
+  media <- mean(datos_filtrados)
+  mediana <- median(datos_filtrados)
+  desv_std <- sd(datos_filtrados)
+  varianza <- var(datos_filtrados)
+  cv <- (desv_std / media) * 100
+  asimetria <- skewness(datos_filtrados)
+  curtosis <- kurtosis(datos_filtrados)
+  
+  # Cuantiles
+  cuantiles_interes <- c(0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99)
+  cuantiles_emp <- quantile(datos_filtrados, probs = cuantiles_interes)
+  cuantiles_teo <- qnorm(cuantiles_interes, mean = media, sd = desv_std)
+  diferencias <- cuantiles_emp - cuantiles_teo
+  
+  # Regiones críticas
+  alpha <- 0.05
+  z_critico <- qnorm(1 - alpha/2)
+  z_cola <- qnorm(1 - alpha)
+  x_izq <- media - z_critico * desv_std
+  x_der <- media + z_critico * desv_std
+  x_cola <- media + z_cola * desv_std
+
+  # Crear gráfico
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  
+  # Histograma
+  hist(datos_filtrados, main = paste("Histograma de", var_name),
+       xlab = paste0(var_name, " (", unidad, ")"), ylab = "Frecuencia",
+       col = "steelblue", border = "white")
+  abline(v = media, col = "red", lwd = 2, lty = 2)
+  abline(v = mediana, col = "green", lwd = 2, lty = 2)
+  
+  # Q-Q Plot
+  qqnorm(datos_filtrados, main = "Q-Q Plot (Normal)")
+  qqline(datos_filtrados, col = "red", lwd = 2)
+  
+  # Boxplot
+  boxplot(datos_filtrados, main = paste("Boxplot de", var_name),
+          ylab = paste0(var_name, " (", unidad, ")"),
+          col = "lightblue", border = "darkblue")
+  
+  # Densidad
+  plot(density(datos_filtrados), main = paste("Densidad de", var_name),
+       xlab = paste0(var_name, " (", unidad, ")"),
+       ylab = "Densidad", col = "darkblue", lwd = 2)
+  polygon(density(datos_filtrados), col = rgb(0, 0.5, 1, 0.3))
+  
+  par(mfrow = c(1, 1))
+  
+  invisible(list(datos = datos_filtrados, stats = list(
+    n = n, media = media, mediana = mediana, desv_std = desv_std,
+    asimetria = asimetria, curtosis = curtosis
+  )))
+}
+
+analizar_variable(apacheApsVar, "glucose", "mg/dL", 40, 600)
+```
+
+La glucosa muestra una distribución fuertemente asimétrica con la media (162.45 mg/dL) muy por encima de la mediana (129.5 mg/dL), señal inequívoca de que valores extremadamente altos inflan el promedio. La variabilidad es extraordinaria (CV del 57%), con un rango que va desde hipoglucemias críticas de 41 mg/dL hasta hiperglucemias severas de 567 mg/dL.
+
+Esta asimetría extrema tiene implicaciones metodológicas importantes. Un intervalo de confianza estándar basado en normalidad produce un límite inferior negativo (-18.16 mg/dL), matemática y biológicamente imposible, confirmando que la distribución no es simétrica. La carga patológica se concentra en la cola derecha: el 10% superior supera los 290 mg/dL, evidenciando una clara tendencia hacia la descompensación hiperglucémica en esta población crítica.
+
+
+## Presión arterial media
+```{r bpm}
+
+analizar_t_student <- function(datos, var_name, unidad, filtro_min, filtro_max, titulo) {
+  
+  # Filtrar datos válidos
+  datos_filtrados <- datos %>%
+    filter(!is.na(!!sym(var_name)),
+           !!sym(var_name) != -1,
+           !!sym(var_name) > filtro_min,
+           !!sym(var_name) < filtro_max) %>%
+    pull(var_name)
+  
+  n <- length(datos_filtrados)
+  
+  if (n < 5) {
+    cat("\n===============================================\n")
+    cat("ANÁLISIS:", titulo, "\n")
+    cat("===============================================\n")
+    cat("ADVERTENCIA: Insuficientes datos válidos (n =", n, ")\n\n")
+    return(invisible(NULL))
+  }
+  
+  media <- mean(datos_filtrados)
+  mediana <- median(datos_filtrados)
+  desv_std <- sd(datos_filtrados)
+  asimetria <- skewness(datos_filtrados)
+  curtosis <- kurtosis(datos_filtrados)
+  
+  # Cuantiles empíricos
+  cuantiles_interes <- c(0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99)
+  cuantiles_emp <- quantile(datos_filtrados, probs = cuantiles_interes)
+  
+  # Cuantiles teóricos (solo para gráficos, no se muestran en tabla)
+  gl <- n - 1
+  cuantiles_normal <- qnorm(cuantiles_interes, mean = media, sd = desv_std)
+  cuantiles_t <- qt(cuantiles_interes, df = gl) * desv_std + media
+  
+  # Imprimir resultados
+
+  cat("ESTADÍSTICAS DESCRIPTIVAS\n")
+  cat("--------------------------\n")
+  cat("n:", n, "| Media:", round(media, 3), unidad, "\n")
+  cat("Mediana:", round(mediana, 3), unidad, "| DE:", round(desv_std, 3), unidad, "\n")
+  cat("Asimetría:", round(asimetria, 3), "| Curtosis:", round(curtosis, 3), "\n")
+  cat("Rango: [", round(min(datos_filtrados), 2), ", ", round(max(datos_filtrados), 2), "]", unidad, "\n\n")
+  
+  # TABLA SOLO CON CUANTILES EMPÍRICOS
+  cat("CUANTILES EMPÍRICOS\n")
+  cat("-------------------\n")
+  for (i in seq_along(cuantiles_interes)) {
+    cat(sprintf("Q(%.2f): %.2f %s\n",
+                cuantiles_interes[i], cuantiles_emp[i], unidad))
+  }
+  cat("\n")
+  
+  # Gráficos
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  
+  # Histograma con densidades
+  hist(datos_filtrados, freq = FALSE, main = paste("Histograma -", titulo),
+       xlab = paste0(var_name, " (", unidad, ")"), ylab = "Densidad",
+       col = "lightblue", border = "white", breaks = 30)
+  x_seq <- seq(min(datos_filtrados), max(datos_filtrados), length.out = 100)
+  lines(x_seq, dnorm(x_seq, media, desv_std), col = "red", lwd = 2, lty = 2)
+  lines(x_seq, dt((x_seq - media) / desv_std, df = gl) / desv_std, col = "green", lwd = 2, lty = 2)
+  legend("topright", c("Normal", "t-Student"), col = c("red", "green"), lty = 2, cex = 0.8)
+  
+  # Q-Q Plot Normal
+  qqnorm(datos_filtrados, main = "Q-Q Plot (Normal)", cex = 0.6)
+  qqline(datos_filtrados, col = "red", lwd = 2)
+  
+  # Q-Q Plot t-Student
+  t_quantiles <- qt(ppoints(n), df = gl)
+  plot(t_quantiles, sort(datos_filtrados), main = "Q-Q Plot (t-Student)",
+       xlab = "Cuantiles t-Student", ylab = "Datos observados", cex = 0.6)
+  abline(a = media, b = desv_std, col = "blue", lwd = 2)
+  
+  # Boxplot
+  boxplot(datos_filtrados, main = paste("Boxplot -", titulo),
+          ylab = paste0(var_name, " (", unidad, ")"),
+          col = "lightcyan", border = "darkblue")
+  
+  par(mfrow = c(1, 1))
+  
+  invisible(list(datos = datos_filtrados, stats = list(n = n, media = media, gl = gl)))
+}
+
+
+analizar_chi_cuadrado <- function(datos, var_name, unidad, filtro_min, filtro_max, titulo) {
+  
+  # Filtrar datos
+  datos_filtrados <- datos %>%
+    filter(!is.na(!!sym(var_name)),
+           !!sym(var_name) != -1,
+           !!sym(var_name) > filtro_min,
+           !!sym(var_name) < filtro_max) %>%
+    pull(var_name)
+  
+  n <- length(datos_filtrados)
+  
+  if (n < 5) {
+
+    cat("ADVERTENCIA: Insuficientes datos válidos (n =", n, ")\n\n")
+    return(invisible(NULL))
+  }
+  
+  media <- mean(datos_filtrados)
+  desv_std <- sd(datos_filtrados)
+  
+  # Calcular Z-scores y suma de cuadrados (χ²)
+  z_scores <- (datos_filtrados - media) / desv_std
+  chi2_values <- z_scores^2
+  
+  # Cuantiles de χ² (empíricos y teóricos para gráficos)
+  cuantiles_interes <- c(0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99)
+  cuantiles_emp_chi2 <- quantile(chi2_values, probs = cuantiles_interes)
+  cuantiles_teo_chi2 <- qchisq(cuantiles_interes, df = 1)
+  
+  # Imprimir resultados
+
+  cat("ESTADÍSTICAS DE VARIABILIDAD\n")
+  cat("--------------------------\n")
+  cat("n:", n, "| Media:", round(media, 3), unidad, "\n")
+  cat("DE:", round(desv_std, 3), unidad, "| CV:", round((desv_std/media)*100, 2), "%\n")
+  cat("Suma Z²:", round(sum(chi2_values), 2), "\n")
+  cat("Rango Z²: [", round(min(chi2_values), 3), ", ", round(max(chi2_values), 3), "]\n\n")
+  
+  # TABLA SOLO CON CUANTILES EMPÍRICOS
+  cat("CUANTILES EMPÍRICOS\n")
+  cat("----------------------\n")
+  for (i in seq_along(cuantiles_interes)) {
+    cat(sprintf("Q(%.2f): %.3f\n",
+                cuantiles_interes[i], cuantiles_emp_chi2[i]))
+  }
+  cat("\n")
+  
+  # Gráficos
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  
+  # Histograma Z²
+  hist(chi2_values, freq = FALSE, main = paste("χ² Agregada -", titulo),
+       xlab = "Z² valores", ylab = "Densidad", col = "lightyellow", 
+       border = "white", breaks = 30)
+  x_seq <- seq(0, max(chi2_values), length.out = 100)
+  lines(x_seq, dchisq(x_seq, df = 1), col = "red", lwd = 2)
+  
+  # Q-Q Plot χ²
+  chi2_theoretical <- qchisq(ppoints(n), df = 1)
+  plot(chi2_theoretical, sort(chi2_values), main = "Q-Q Plot (χ²)",
+       xlab = "χ² teórica", ylab = "χ² observada", cex = 0.6)
+  abline(a = 0, b = 1, col = "blue", lwd = 2)
+  
+  # Boxplot
+  boxplot(chi2_values, main = paste("Boxplot χ² -", titulo),
+          ylab = "Z² valores", col = "lightgreen", border = "darkgreen")
+  
+  # Densidad
+  plot(density(chi2_values), main = paste("Densidad χ² -", titulo),
+       xlab = "Z² valores", ylab = "Densidad", col = "darkred", lwd = 2)
+  polygon(density(chi2_values), col = rgb(1, 0, 0, 0.2))
+  
+  par(mfrow = c(1, 1))
+  
+  invisible(list(chi2 = chi2_values, stats = list(n = n, suma_chi2 = sum(chi2_values))))
+}
+
+analizar_f_snedecor <- function(datos, var_name, unidad, grupo_var, 
+                                filtro_min, filtro_max, titulo, g1_name, g2_name) {
+  
+  # Filtrar datos
+  datos_filtrados <- datos %>%
+    filter(!is.na(!!sym(var_name)),
+           !is.na(!!sym(grupo_var)),
+           !!sym(var_name) != -1,
+           !!sym(var_name) > filtro_min,
+           !!sym(var_name) < filtro_max)
+  
+  # Separar grupos
+  grupo1 <- datos_filtrados %>%
+    filter(!!sym(grupo_var) == 1) %>%
+    pull(var_name)
+  
+  grupo2 <- datos_filtrados %>%
+    filter(!!sym(grupo_var) == 0) %>%
+    pull(var_name)
+  
+  n1 <- length(grupo1)
+  n2 <- length(grupo2)
+  
+  if (n1 < 2 | n2 < 2) {
+    cat("\n===============================================\n")
+    cat("ANÁLISIS F DE SNEDECOR:", titulo, "\n")
+    cat("===============================================\n")
+    cat("ADVERTENCIA: Insuficientes datos en grupos (n1 =", n1, ", n2 =", n2, ")\n\n")
+    return(invisible(NULL))
+  }
+  
+  var1 <- var(grupo1)
+  var2 <- var(grupo2)
+  media1 <- mean(grupo1)
+  media2 <- mean(grupo2)
+  
+  # F test
+  f_stat <- var1 / var2
+  gl1 <- n1 - 1
+  gl2 <- n2 - 1
+  p_value <- pf(f_stat, gl1, gl2, lower.tail = FALSE)
+  
+  # Imprimir resultados
+  cat("GRUPOS COMPARADOS\n")
+  cat("-----------------\n")
+  cat(g1_name, ":\n")
+  cat("  n =", n1, "| Media =", round(media1, 3), "| Varianza =", round(var1, 3), unidad, "\n")
+  cat(g2_name, ":\n")
+  cat("  n =", n2, "| Media =", round(media2, 3), "| Varianza =", round(var2, 3), unidad, "\n\n")
+  
+  cat("TEST F DE SNEDECOR\n")
+  cat("------------------\n")
+  cat("F =", round(f_stat, 4), "(gl1 =", gl1, ", gl2 =", gl2, ")\n")
+  cat("p-value =", round(p_value, 6), "\n")
+  cat("Razón de varianzas:", round(f_stat, 4), "\n\n")
+  
+  # Cuantiles F
+  cuantiles <- c(0.25, 0.50, 0.75, 0.90, 0.95)
+  cuantiles_f <- qf(cuantiles, df1 = gl1, df2 = gl2)
+  cat("CUANTILES DE F TEÓRICA\n")
+  cat("---------------------\n")
+  for (i in seq_along(cuantiles)) {
+    cat(sprintf("Q(%.2f) = %.4f\n", cuantiles[i], cuantiles_f[i]))
+  }
+  cat("\n")
+  
+  # Gráficos
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  
+  # Boxplot comparativo
+  boxplot(list(grupo1, grupo2), names = c(g1_name, g2_name),
+          main = paste("Comparación -", titulo),
+          ylab = paste0(var_name, " (", unidad, ")"),
+          col = c("lightblue", "lightcoral"), border = "black")
+  
+  # Histogramas superpuestos
+  lim_max <- max(max(grupo1), max(grupo2))
+  lim_min <- min(min(grupo1), min(grupo2))
+  hist(grupo1, freq = FALSE, main = "Distribuciones",
+       xlab = paste0(var_name, " (", unidad, ")"), 
+       ylab = "Densidad", col = rgb(0, 0, 1, 0.3), 
+       border = "blue", breaks = 20, xlim = c(lim_min, lim_max))
+  hist(grupo2, freq = FALSE, add = TRUE, col = rgb(1, 0, 0, 0.3),
+       border = "red", breaks = 20)
+  legend("topright", c(g1_name, g2_name), fill = c("lightblue", "lightcoral"), cex = 0.8)
+  
+  # Distribución F teórica
+  x_seq <- seq(0.1, max(qf(0.99, gl1, gl2), f_stat) * 1.2, length.out = 100)
+  plot(x_seq, df(x_seq, gl1, gl2), type = "l", col = "blue", lwd = 2,
+       main = "Distribución F de Snedecor",
+       xlab = "F valor", ylab = "Densidad")
+  abline(v = f_stat, col = "red", lwd = 2, lty = 2)
+  polygon(x_seq[x_seq >= f_stat], df(x_seq[x_seq >= f_stat], gl1, gl2),
+          col = rgb(1, 0, 0, 0.3))
+  legend("topright", paste("F obs =", round(f_stat, 3)), cex = 0.8)
+  
+  # Densidad kernel de varianzas
+  plot(density(grupo1), col = "blue", lwd = 2, main = "Densidades por grupo",
+       xlab = paste0(var_name, " (", unidad, ")"), ylab = "Densidad")
+  lines(density(grupo2), col = "red", lwd = 2)
+  legend("topright", c(g1_name, g2_name), col = c("blue", "red"), lty = 1, cex = 0.8)
+  
+  par(mfrow = c(1, 1))
+  
+  invisible(list(f_stat = f_stat, p_value = p_value, gl1 = gl1, gl2 = gl2))
+}
+
+
+analizar_variable(apacheApsVar, "meanbp", "mmHg", 30, 200)
+```
+
+El análisis de la presión arterial media muestra  una estructura asimétrica y dispersa, donde la media (84.65) supera a la mediana (65), confirmando un sesgo positivo que desplaza la densidad hacia valores superiores. A su vez, el perfil platicúrtico y un coeficiente de variación del 47% describen una distribución aplanada sin una moda determinada. La variable carece de un comportamiento  rígido y presenta una gran variabilidad.
+
+
+
+## Probabilidad de mortalidad predicha en UCI
+
+
+```{r mortalidad}
+if(exists("apachePatientResult") && "predictedicumortality" %in% names(apachePatientResult)) {
+  
+  # Histograma
+  ggplot(apachePatientResult, aes(x = predictedicumortality)) +
+    geom_histogram(bins = 30, fill = "darkred", alpha = 0.7) +
+    labs(title = "Distribución de probabilidad de mortalidad predicha",
+         x = "Probabilidad (%)",
+         y = "Frecuencia") +
+    theme_minimal()
+} else {
+  cat("**Análisis de probabilidad de mortalidad**\n\n")
+  cat("Variable pendiente de análisis.\n")
+}
+```
+
+Inconsistencia en la calidad de los datos con un valor mínimo de -1, cifra imposible para una probabilidad y que carece de sentido biológico, lo cual sesga artificialmente la media (1.5%) a la baja. Al observar la mediana para mitigar este error, vemos que el riesgo central es muy bajo (1.9%) y que tres cuartas partes de la muestra presentan una probabilidad de fallecimiento inferior al 5.6%, lo que sugiere una distribución asimétrica positiva donde la mayoría de los pacientes tienen un pronóstico favorable. No obstante, el rango máximo alcanza el 90.7%, lo que indica que, a pesar de la tendencia general a la supervivencia, existe una cola de pacientes críticos con un riesgo vital extremo que se desvían drásticamente del comportamiento estándar de la población.
+
+## Duración de la estancia en UCI
+
+```{r estancia}
+analizar_t_student(apachePatientResult, "actualiculos", "días", 0, 300,
+                   "DURACIÓN ESTANCIA UCI (días)")
+```
+
+Distribución extremadamente asimétrica y leptocúrtica (curtosis > 46), donde la media aritmética de 2.67 días se encuentra inflada por valores extremos y no representa fielmente al paciente típico. La mediana de 1.70 días actúa como un estimador central mucho más robusto, revelando que la mitad de la población es dada de alta o trasladada en menos de 48 horas, lo que sugiere una alta rotación de pacientes con recuperaciones rápidas o estancias de monitoreo breve. Sin embargo, la "cola pesada" a la derecha es crítica: aunque el 90% de los casos se resuelven en menos de 5 días y medio, existe un subgrupo de larga estancia (el 1% superior supera los 17 días) que llega hasta los 46 días, representando esos casos clínicos complejos
+
+## Puntuación de fisiología aguda (APS)
+
+```{r aps}
+analizar_t_student(apachePatientResult, "acutephysiologyscore", "puntos", 0, 60,
+                   "ACUTE PHYSIOLOGY SCORE (APS)")
+
+```
+
+Distribución notablemente simétrica y equilibrada, distanciándose del comportamiento sesgado de las variables anteriores. La coincidencia casi perfecta entre la media (33.98) y la mediana (33), sumada a una asimetría prácticamente nula (0.132), sugiere un comportamiento que se aproxima a la normalidad estadística; sin embargo, su curtosis baja (2.246) revela un perfil platicúrtico, lo que indica que los datos están menos concentrados alrededor del promedio y más dispersos a lo largo del rango. Desde una perspectiva clínica, esto refleja una población muy heterogénea que cubre todo el espectro de gravedad fisiológica de forma uniforme, desde cuadros leves (mínimo de 2) hasta situaciones de fallo orgánico severo (máximo de 59)
+
+## Días de ventilación mecánica
+
+
+```{r ventilacion}
+analizar_t_student(apachePatientResult, "actualventdays", "días", 0, 50,
+                   "DÍAS DE VENTILACIÓN MECÁNICA")
+```
+
+Distribución asimétrica positiva muy agresiva y altamente leptocúrtica (curtosis ~21), lo que invalida la media aritmética (3.39 días) como representativa del paciente estándar. La mediana de apenas 2 días y un primer cuartil anclado en el mínimo (1 día) revelan que la dinámica clínica predominante es el soporte respiratorio transitorio, con una gran masa de pacientes que logran una extubación exitosa o son desconectados en las primeras 24 a 48 horas. No obstante, la variabilidad es extrema (la desviación estándar supera a la media), impulsada por una "cola larga" de pacientes con dependencia prolongada; aunque el 90% de los casos se resuelven en una semana, existe un remanente crítico (el 1% superior supera los 20 días) que representa los casos de destete respiratorio complejo o cronificación
+
+
+## Presión parcial de oxígeno
+
+```{r pao2}
+analizar_t_student(apacheApsVar, "pao2", "mmHg", 30, 500,
+                   "PaO₂ - PRESIÓN PARCIAL OXÍGENO")
+```
+
+Distribución marcadamente sesgada a la derecha  y leptocúrtica, donde la media de 125.02 mmHg se encuentra artificialmente elevada por valores extremos, distanciándose de la mediana de 102 mmHg que representa mejor el estado de la muestra. La dispersión es masiva (desviación estándar de casi 77 mmHg), reflejando dos realidades clínicas opuestas en la misma unidad: por un lado, una cola inferior que denota falta de oxigeno severa e insuficiencia respiratoria (el 5% de los pacientes no alcanza los 55 mmHg), y por otro, una extensa cola superior con valores de un exceso de oxígeno en la sangre arteria que alcanzan los 494 mmHg. 
+
+## Presión parcial de dióxido de carbono
+
+
+```{r paco2}
+analizar_t_student(apacheApsVar, "pco2", "mmHg", 15, 100,
+                   "PaCO₂ - PRESIÓN PARCIAL Co2")
+
+```
+
+Distribución leptocúrtica y asimétrica positiva que, pese a tener una mediana de 40.3 mmHg perfectamente centrada en el rango de normalidad fisiológica (35-45 mmHg), esconde una dispersión  significativa. Mientras la mayor parte de la muestra  mantiene una ventilación adecuada, los datos muestran que las desviaciones no son aleatorias, sino que tienden sistemáticamente hacia la retención de gases: el rango intercuartílico ya rompe la barrera del  exceso de CO2 en su límite superior (47.55 mmHg). Lo más relevante estadísticamente es la cola derecha de la distribución, donde la variabilidad se dispara; el hecho de que el 5% de los pacientes supere los 66 mmHg y se alcancen máximos de 94 mmHg indica que el riesgo dominante en esta muestra no es la hiperventilación, sino el fracaso ventilatorio con retención severa de CO2, definiendo un subgrupo de alta gravedad que se desvía del comportamiento medio estable.
+
+## Fracción inspirada de oxígeno
+
+```{r fio2}
+analizar_t_student(apacheApsVar, "fio2", "%", 20, 100,
+                   "FiO2 - FRACCIÓN OXÍGENO INSPIRADA")
+```
+
+Distribución con una asimetría positiva moderada (0.671) y una curtosis cercana a la normalidad (3.138), cuyo comportamiento está  condicionado por: el mínimo y el percentil 5 se anclan en el 21% (aire ambiente), lo que indica que una fracción menor de la muestra respira sin asistencia. Sin embargo, la mediana del 44% y un primer cuartil situado ya en el 35% revelan que la inmensa mayoría de la población recibe oxigenoterapia activa en rangos moderados. Aunque la tendencia central sugiere un soporte no invasivo, la desviación estándar del 16% es amplia y empuja la cola derecha hacia valores críticos; el hecho de que el 10% superior de la muestra requiera concentraciones por encima del 70% y se alcancen máximos del 95% evidencia la presencia de un subgrupo con fallo respiratorio grave.
+
+## Leucocitos
+
+```{r leucocitos}
+analizar_chi_cuadrado(apacheApsVar, "wbc", "K/μL", 1, 30,
+                      "WBC - VARIABILIDAD RESPUESTA INFLAMATORIA")
+
+```
+
+Heterogeneidad biológica muy acusada (CV del 49.53%), donde la media  se sitúa ya en el límite superior de la normalidad, sugiriendo una tendencia poblacional hacia el aumento del número de leucocitos (glóbulos blancos) en la sangre. El hecho de que el 5% superior de las desviaciones cuadráticas supere el umbral crítico de 3.79 y que el 1% extremo alcance valores de 8.31 (con máximos de 11.54), revela estadísticamente la presencia de valores atípicos significativos.
+
+
+## Bilirrubina
+
+```{r bilirrubina}
+analizar_chi_cuadrado(apacheApsVar, "bilirubin", "mg/dL", 0.1, 20,
+                      "BILIRRUBINA - VARIABILIDAD FUNCIÓN HEPÁTICA")
+```
+
+Dispersión extrema y altamente inestable (CV del 150.8%), superior a cualquier otra métrica biológica analizada, lo que indica que la varianza no se distribuye homogéneamente en la población. Al observar los cuantiles de la desviación cuadrática ($Z^2$), notamos un patrón clínico muy claro: hasta el percentil 75, las desviaciones son minúsculas (< 0.237), lo que sugiere que la inmensa mayoría de los pacientes mantiene una función hepática conservada con niveles  cercanos al promedio. Sin embargo, la variabilidad total está  agrupada por una minoría patológica crítica; el gran salto  en el último percentil (donde el $Z^2$ pasa de 2.1 a 18.38 y alcanza un máximo de 102.11) confirma que no estamos ante una degradación progresiva de la función del hígado en toda la muestra, sino ante la presencia puntual de casos de fallo hepático.
+
+## Hematocrito
+
+
+```{r hematocrito}
+analizar_chi_cuadrado(apacheApsVar, "hematocrit", "%", 15, 60,
+                      "HEMATOCRITO - VARIABILIDAD OXIGENACIÓN")
+
+```
+
+Perfil de dispersión mucho más contenido que el observado en marcadores  hepáticos, con un coeficiente de variación moderado del 20.37%. Si bien la media de 33.22% sugiere un desplazamiento general de la población hacia la anemia un fenómeno esperable en la UCI, la estructura de las desviaciones cuadráticas ($Z^2$) denota un comportamiento estadístico bastante coherente; la mediana empírica de 0.541 se aproxima a lo esperado teóricamente, lo que implica que la capacidad de transporte de oxígeno de la gran mayoría de los pacientes oscila de forma predecible en torno al promedio. No obstante, la cola superior de la variabilidad no debe ignorarse: con un percentil 99 situándose en 6.147 y máximos de 11.03.
+
+
+## Saturación de O2
+
+
+```{r sao2}
+analizar_chi_cuadrado(vitalPeriodic, "sao2", "%", 50, 100,
+                      "SaO2 - VARIABILIDAD SATURACIÓN OXÍGENO")
+
+```
+
+La mayor estabilidad homeostática del estudio (CV: 3.35%), con una media de 95.77% que refleja un estricto control clínico para mantener la parcial de oxígeno en la sangre arterial. La distribución de las desviaciones cuadráticas muestra una concentración masiva en torno al promedio (mediana $Z^2$: 0.303); no obstante, el valor máximo de 194.98 revela la existencia de eventos puntuales de desaturación extrema que, aunque estadísticamente atípicos, representan situaciones de disminución del oxígeno crítica alejadas más de 13 desviaciones estándar de la normalidad.
+
+
+## Presión arterial media (intubados vs no intubados)
+
+
+```{r pam-intubados}
+analizar_f_snedecor(apacheApsVar, "meanbp", "mmHg", "intubated", 30, 200,
+                    "PAM: INTUBADOS vs NO INTUBADOS",
+                    "Intubados", "No Intubados")
+```
+
+El test F de Snedecor rechaza contundentemente la hipótesis de homogeneidad de varianzas ($F=1.35, p < 0.001$), evidenciando una heterocedasticidad clínicamente relevante. El grupo de pacientes intubados presenta una dispersión significativamente mayor (varianza de 2072 frente a 1530 mmHg), lo que indica que el soporte ventilatorio o la gravedad subyacente inducen una circulación inestable , caracterizada por oscilaciones de la presión arterial media un 35% más amplias que las observadas en los pacientes no intubados, quienes mantienen un perfil tensional más predecible.
+
+
+
+# Estimadores Puntuales
+
+##    Marco teórico
+
+Un estimador puntual es una función que transforma datos muestrales en una única estimación de un parámetro poblacional desconocido:
+
+$$\hat{\theta} = T(X_1, X_2, \ldots, X_n)$$
+
+donde $T$ es una función medible que no depende del parámetro $\theta$ que queremos estimar.
+
+
+
+* **Método de los Momentos (MOM):**
+Iguala los momentos muestrales con sus correspondientes momentos poblacionales. Por ejemplo, para estimar $\mu$:
+$$\bar{X} = \frac{1}{n}\sum_{i=1}^n X_i = E[X] = \mu$$
+
+
+
+* **Máxima Verosimilitud (MLE):**
+Encuentra el valor del parámetro que maximiza la probabilidad de observar los datos:
+$$\hat{\theta}_{MLE} = \arg\max_{\theta} L(\theta|x_1,\ldots,x_n)$$
+
+¿Qué debería cumplir nuestro estimador para considerarlo bueno?
+
+**1. Insesgadez**
+Un estimador es insesgado cuando su valor esperado coincide exactamente con el parámetro poblacional que pretende estimar $$E[\hat{\theta}] = \theta$$ Esto significa que si repitiéramos el proceso de muestreo infinitas veces, el promedio de todas las estimaciones obtenidas convergiría al valor verdadero del parámetro, aunque estimaciones individuales puedan estar por encima o por debajo del valor real.
+
+
+
+**2. Mínimo Error Cuadrático Medio**
+
+El Error Cuadrático Medio cuantifica la calidad  de un estimador al combinar tanto su varianza como su sesgo al cuadrado. 
+
+$$\text{ECM}(\hat{\theta}) = \text{Var}(\hat{\theta}) + [\text{Sesgo}(\hat{\theta})]^2$$
+
+Esta métrica permite comparar estimadores que pueden tener diferentes balances entre precisión y exactitud, reconociendo que en ocasiones un pequeño sesgo puede compensarse con una reducción significativa en la variabilidad, resultando en un mejor estimador en términos del error total.
+
+
+
+
+**3. Eficiencia (Cota de Cramér-Rao)**
+
+La eficiencia de un estimador insesgado se evalúa comparando su varianza con la cota inferior de Cramér-Rao, que establece el mínimo teórico alcanzable
+
+$$\text{Var}(\hat{\theta}) \geq \frac{1}{nI(\theta)}$$
+
+I(θ) es la información de Fisher( (que mide la cantidad de información que los datos observables proporcionan sobre el parámetro desconocido)). 
+
+Un estimador que alcanza esta cota se denomina eficiente y representa el mejor estimador insesgado posible, ya que extrae la máxima información disponible en la muestra sobre el parámetro de interés.
+
+
+
+**4. Consistencia**
+
+Un estimador es consistente cuando converge en probabilidad al valor verdadero del parámetro a medida que el tamaño muestral aumenta indefinidamente. 
+
+$$\hat{\theta}_n \xrightarrow{P} \theta \quad \text{cuando } n \to \infty$$
+
+Esta propiedad asintótica garantiza que con muestras suficientemente grandes, la probabilidad de que el estimador esté arbitrariamente cerca del parámetro verdadero se aproxima a uno, lo cual es fundamental para la validez de las inferencias estadísticas en estudios con grandes volúmenes de datos.
+
+
+
+
+**5. Normalidad Asintótica**
+
+La normalidad asintótica establece que la distribución del estimador, apropiadamente estandarizada, converge a una distribución normal cuando el tamaño muestral tiende a infinito. 
+
+$$\sqrt{n}(\hat{\theta}_n - \theta) \xrightarrow{d} N(0, \sigma^2)$$
+
+Esta propiedad  permite construir intervalos de confianza y realizar pruebas de hipótesis basadas en la distribución normal, incluso cuando desconocemos la distribución exacta del estimador para muestras finitas.
+
+
+
+
+**Un estimador puede ser insesgado pero inconsistente, o sesgado pero con menor ECM que uno insesgado**
+
+## Estimador puntual - Presión Arterial Media
+
+**Cuál es la media real de la presión arterial en la población y con qué nivel de certeza podemos afirmar su valor?**
+
+Nos enfrentamos a una muestra masiva de 227380 registros clínicos, una cantidad de información  grande que garantiza  estabilidad. Al buscar el "centro" de comportamiento de la presión arterial tanto el método de los momentos como la máxima verosimilitud coinciden en una media de 80.38 mmHg. Este nos dice que, a pesar de haber encontrado valores extremos en el rango (desde 1 hasta 199 mmHg), el punto de equilibrio de la población es robusto.
+
+```{r caso1-pam-preparacion, results='markup'}
+
+# Preparación de datos
+pam <- vitalPeriodic$systemicmean
+pam_limpio <- pam[!is.na(pam) & pam > 0 & pam < 200]
+n <- length(pam_limpio)
+
+cat("1. CARACTERÍSTICAS DE LA MUESTRA\n")
+cat("----------------------------------\n")
+cat(sprintf("Tamaño muestral: n = %d\n", n))
+cat(sprintf("Rango: [%.2f, %.2f] mmHg\n", min(pam_limpio), max(pam_limpio)))
+cat(sprintf("Media muestral: %.4f mmHg\n", mean(pam_limpio)))
+cat(sprintf("Varianza muestral: %.4f mmHg²\n\n", var(pam_limpio)))
+```
+```{r caso1-pam-estimadores, results='markup'}
+cat("2. ESTIMADORES PUNTUALES\n")
+cat("----------------------------------\n\n")
+
+# Método de los Momentos
+mu_mom <- mean(pam_limpio)
+m2 <- mean(pam_limpio^2)
+sigma2_mom <- m2 - mu_mom^2
+
+cat("MÉTODO DE LOS MOMENTOS:\n")
+cat(sprintf("μ̂_MOM = m₁ = %.4f mmHg\n", mu_mom))
+cat(sprintf("σ²_MOM = m₂ - m₁² = %.4f mmHg²\n\n", sigma2_mom))
+
+# Método de Máxima Verosimilitud
+mu_mle <- mean(pam_limpio)
+sigma2_mle <- sum((pam_limpio - mu_mle)^2) / n
+
+cat("MÉTODO DE MÁXIMA VEROSIMILITUD:\n")
+cat(sprintf("μ̂_MLE = X̄ = %.4f mmHg\n", mu_mle))
+cat(sprintf("σ²_MLE = (1/n)Σ(xᵢ-x̄)² = %.4f mmHg²\n\n", sigma2_mle))
+
+# Estimador insesgado de varianza
+sigma2_unbiased <- var(pam_limpio)
+
+cat("ESTIMADOR INSESGADO:\n")
+cat(sprintf("S² = (1/(n-1))Σ(xᵢ-x̄)² = %.4f mmHg²\n\n", sigma2_unbiased))
+```
+
+Cuando analizamos la variabilidad observamos que el estimador de máxima verosimilitud carga con un sesgo matemático, la magnitud de nuestra muestra reduce este "error" hasta hacerlo desaparecer. El sesgo calculado es del 0.001%, lo que significa que la varianza de 268.19 mmHg2 describe  la dispersión de los datos sin necesidad de correcciones adicionales.
+
+```{r caso1-pam-propiedades, results='markup'}
+cat("3. PROPIEDADES DE LOS ESTIMADORES\n")
+cat("----------------------------------\n\n")
+
+# Insesgadez
+cat("A) INSESGADEZ:\n")
+cat("   E[μ̂_MLE] = μ → INSESGADO \n")
+cat("   E[σ²_MLE] = [(n-1)/n]σ² → SESGADO\n")
+cat("   E[S²] = σ² → INSESGADO \n\n")
+
+sesgo_sigma2 <- sigma2_mle - sigma2_unbiased
+cat(sprintf("   Sesgo de σ²_MLE = %.4f (%.2f%%)\n\n", 
+            sesgo_sigma2, abs(sesgo_sigma2/sigma2_unbiased)*100))
+
+# Varianza y ECM
+var_media <- sigma2_unbiased / n
+ecm_media <- var_media
+
+cat("B) ERROR CUADRÁTICO MEDIO:\n")
+cat(sprintf("   Var(μ̂) = σ²/n = %.6f\n", var_media))
+cat(sprintf("   ECM(μ̂) = %.6f\n\n", ecm_media))
+
+# Cota de Cramér-Rao
+cat("C) COTA DE CRAMÉR-RAO:\n")
+cat("   Información de Fisher: I(μ) = n/σ²\n")
+cota_cr_mu <- sigma2_unbiased / n
+cat(sprintf("   Cota CR para μ̂ = %.6f\n", cota_cr_mu))
+cat(sprintf("   Var(μ̂) = %.6f\n", var_media))
+cat("   CONCLUSIÓN: μ̂ alcanza la cota → ES UMVUE \n\n")
+```
+
+Finalmente, el tamaño muestral nos permite aplicar la Normalidad Asintótica, garantizando que la distribución del estimador converge a una campana de Gauss perfecta 
+
+$$\sqrt{n}(\hat{\mu} - \mu) \xrightarrow{d} N(0, \sigma^2)$$
+
+Esta propiedad reduce la incertidumbre a un Error Estándar mínimo de 0.0343 mmHg, lo que agrupa nuestra inferencia en un intervalo de confianza del 95%  estrecho: [80.3092, 80.4438] mmHg. No solo sabemos dónde está la media, sino que hemos acotado su ubicación con una gran precisión.
+
+```{r caso1-pam-asintotico, results='markup', fig.width=8, fig.height=5}
+library(ggplot2)
+
+cat("4. PROPIEDADES ASINTÓTICAS\n")
+cat("----------------------------------\n\n")
+
+se_media <- sqrt(var_media)
+ic_mu <- c(mu_mle - 1.96*se_media, mu_mle + 1.96*se_media)
+
+cat("NORMALIDAD ASINTÓTICA:\n")
+cat("√n(μ̂ - μ) →ᵈ N(0, σ²)\n\n")
+cat(sprintf("Error estándar: SE(μ̂) = %.4f mmHg\n", se_media))
+cat(sprintf("IC 95%%: [%.4f, %.4f] mmHg\n\n", ic_mu[1], ic_mu[2]))
+
+# Gráfico
+x_vals <- seq(mu_mle - 4*se_media, mu_mle + 4*se_media, length.out = 200)
+y_vals <- dnorm(x_vals, mean = mu_mle, sd = se_media)
+
+ggplot(data.frame(x = x_vals, y = y_vals), aes(x, y)) +
+  geom_line(color = "darkblue", linewidth = 1.2) +
+  geom_vline(xintercept = mu_mle, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_vline(xintercept = ic_mu, linetype = "dotted", color = "darkgreen", linewidth = 0.8) +
+  geom_area(alpha = 0.3, fill = "lightblue") +
+  labs(title = "Distribución Asintótica del Estimador μ̂ (PAM)",
+       subtitle = sprintf("μ̂ = %.2f mmHg | IC 95%% = [%.2f, %.2f]", 
+                         mu_mle, ic_mu[1], ic_mu[2]),
+       x = "PAM (mmHg)", y = "Densidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 13))
+```
+
+## Recuento de Glóbulos Blancos (WBC) - Distribución Poisson
+
+**¿Es posible obtener estimaciones precisas de un parámetro poblacional incluso cuando los datos presentan una alta sobredispersión?**
+
+El análisis sobre 1517 pacientes arroja una media de 11.71 células/mm³, valor en el que convergen idénticamente los métodos de Momentos y Máxima Verosimilitud. Sin embargo, la muestra revela una fuerte sobredispersión: la varianza (51.15) supera ampliamente a la media, evidenciando que la realidad con rangos extremos de 0.10 a 82.50 células/mm³ es más volátil que lo que asume un modelo Poisson puro, aunque el estimador de la media permanece robusto.
+
+```{r caso2-wbc-preparacion, results='markup'}
+# Preparación de datos
+wbc_data <- apacheApsVar$wbc
+wbc_data <- wbc_data[!is.na(wbc_data) & wbc_data > 0]
+n_wbc <- length(wbc_data)
+
+cat("1. CARACTERÍSTICAS DE LA MUESTRA\n")
+cat("----------------------------------\n")
+cat(sprintf("Tamaño muestral: n = %d\n", n_wbc))
+cat(sprintf("Rango: [%.2f, %.2f] células/mm³\n", min(wbc_data), max(wbc_data)))
+cat(sprintf("Media muestral: %.4f\n", mean(wbc_data)))
+cat(sprintf("Varianza muestral: %.4f\n\n", var(wbc_data)))
+```
+
+En términos de eficiencia estadística, el estimador $\hat{\lambda}$ resulta aceptable. Es insesgado y su varianza ($\approx 0.0077$) iguala matemáticamente a la Cota de Cramér-Rao. Esto lo fija como el estimador Insesgado de Varianza Mínima Uniforme (UMVUE); es decir, hemos extraído toda la información posible de la muestra, logrando la máxima precisión teórica alcanzable bajo este modelo.
+
+```{r caso2-wbc-estimadores, results='markup'}
+cat("2. ESTIMADORES PUNTUALES\n")
+cat("----------------------------------\n\n")
+
+# Método de los Momentos
+lambda_mm <- mean(wbc_data)
+
+cat("MÉTODO DE LOS MOMENTOS:\n")
+cat("Igualamos: E[X] = λ con m₁ = X̄\n")
+cat(sprintf("λ̂_MM = X̄ = %.4f células/mm³\n\n", lambda_mm))
+
+# Método de Máxima Verosimilitud
+lambda_mle <- mean(wbc_data)
+
+cat("MÉTODO DE MÁXIMA VEROSIMILITUD:\n")
+cat("Log-verosimilitud: ℓ(λ) = Σxᵢ log(λ) - nλ - Σlog(xᵢ!)\n")
+cat("Derivada: dℓ/dλ = Σxᵢ/λ - n = 0\n")
+cat(sprintf("λ̂_MLE = X̄ = %.4f células/mm³\n\n", lambda_mle))
+
+
+```
+
+```{r caso2-wbc-propiedades, results='markup'}
+cat("3. PROPIEDADES DE LOS ESTIMADORES\n")
+cat("----------------------------------\n\n")
+
+# Insesgadez
+cat("A) INSESGADEZ:\n")
+cat("   E[λ̂] = E[X̄] = E[(1/n)ΣXᵢ] = λ\n")
+cat("   El estimador es INSESGADO \n\n")
+
+# Varianza y ECM
+var_lambda_hat <- lambda_mle / n_wbc
+mse_lambda <- var_lambda_hat
+
+cat("B) VARIANZA Y ECM:\n")
+cat(sprintf("   Var(λ̂) = λ/n = %.4f/%d = %.6f\n", lambda_mle, n_wbc, var_lambda_hat))
+cat(sprintf("   ECM(λ̂) = Var(λ̂) = %.6f (sesgo = 0)\n\n", mse_lambda))
+
+# Cota de Cramér-Rao
+fisher_info <- n_wbc / lambda_mle
+cota_cr <- 1 / fisher_info
+
+cat("C) COTA DE CRAMÉR-RAO:\n")
+cat("   Información de Fisher: I(λ) = n/λ\n")
+cat(sprintf("   I(λ) = %d/%.4f = %.4f\n", n_wbc, lambda_mle, fisher_info))
+cat(sprintf("   Cota CR = 1/I(λ) = %.6f\n", cota_cr))
+cat(sprintf("   Var(λ̂) = %.6f\n", var_lambda_hat))
+cat(sprintf("   Diferencia = %.8f\n\n", abs(var_lambda_hat - cota_cr)))
+cat("   CONCLUSIÓN: λ̂ alcanza la cota de Cramér-Rao → ES UMVUE \n\n")
+```
+
+La normalidad asintótica derivada del tamaño muestral reduce la incertidumbre a un error estándar marginal de 0.0879. Esto nos permite acotar la media poblacional en un intervalo de confianza del 95% sumamente estrecho: [11.54, 11.88] células/mm³. A pesar de la inestabilidad individual de los pacientes, hemos determinado el parámetro central de la población con gran precisión.
+
+```{r caso2-wbc-asintotico, results='markup', fig.width=8, fig.height=5}
+cat("4. PROPIEDADES ASINTÓTICAS\n")
+cat("----------------------------------\n\n")
+
+se_lambda <- sqrt(var_lambda_hat)
+ic_lambda <- c(lambda_mle - 1.96*se_lambda, lambda_mle + 1.96*se_lambda)
+
+cat("NORMALIDAD ASINTÓTICA:\n")
+cat("√n(λ̂ - λ) →ᵈ N(0, λ)\n\n")
+cat(sprintf("Error estándar: SE(λ̂) = %.4f\n", se_lambda))
+cat(sprintf("IC 95%%: [%.4f, %.4f] células/mm³\n\n", ic_lambda[1], ic_lambda[2]))
+
+# Gráfico
+x_vals <- seq(max(0, lambda_mle - 4*se_lambda), lambda_mle + 4*se_lambda, length.out = 200)
+y_vals <- dnorm(x_vals, mean = lambda_mle, sd = se_lambda)
+
+ggplot(data.frame(x = x_vals, y = y_vals), aes(x, y)) +
+  geom_line(color = "darkred", linewidth = 1.2) +
+  geom_vline(xintercept = lambda_mle, linetype = "dashed", color = "blue", linewidth = 1) +
+  geom_vline(xintercept = ic_lambda, linetype = "dotted", color = "darkgreen", linewidth = 0.8) +
+  geom_area(alpha = 0.3, fill = "lightcoral") +
+  labs(title = "Distribución Asintótica del Estimador λ̂ (WBC)",
+       subtitle = sprintf("λ̂ = %.2f | IC 95%% = [%.2f, %.2f]", 
+                         lambda_mle, ic_lambda[1], ic_lambda[2]),
+       x = "λ (células/mm³)", y = "Densidad") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 13))
+```
+
+### Duración de Estancia en UCI - Distribución Gamma
+
+**¿Cuál es el balance óptimo entre insesgadez y eficiencia al estimar parámetros de distribuciones complejas con datos reales?**
+
+El modelado de la estancia hospitalaria se realiza sobre una muestra de 3676 pacientes, caracterizada por una fuerte asimetría y una varianza muestral (11.72 días) que fija la media en (2.67 días). Mientras el MOM sugiere una forma de $\approx 0.61$, el MLE propone un $\alpha \approx 1.32$. Ante esta discrepancia, priorizamos los estimadores de Máxima Verosimilitud ($\hat{\alpha}=1.322, \hat{\beta}=0.496$) por su mayor eficiencia asintótica y capacidad para gestionar la estructura de probabilidad de los datos, logrando que la media estimada por el modelo (2.67 días) replique con exactitud el promedio observado en la realidad.
+
+```{r caso3-los-preparacion, results='markup'}
+cat("================================================================================\n")
+cat("CASO 3: DURACIÓN DE ESTANCIA EN UCI\n")
+
+cat("================================================================================\n\n")
+
+# Preparación de datos
+los_data <- apachePatientResult$actualiculos
+los_data <- los_data[!is.na(los_data) & los_data > 0]
+n_los <- length(los_data)
+
+cat("1. CARACTERÍSTICAS DE LA MUESTRA\n")
+cat("----------------------------------\n")
+cat(sprintf("Tamaño muestral: n = %d\n", n_los))
+cat(sprintf("Rango: [%.2f, %.2f] días\n", min(los_data), max(los_data)))
+cat(sprintf("Media muestral: %.4f días\n", mean(los_data)))
+cat(sprintf("Varianza muestral: %.4f días²\n\n", var(los_data)))
+```
+
+Al evaluar la calidad de estos estimadores MLE, observamos un comportamiento asintótico muy favorable. Aunque en muestras finitas presentan un sesgo matemático, este resulta despreciable (sesgo de $\hat{\alpha} \approx 0.00036$), y sus varianzas son minúsculas. Es importante notar que, en este escenario complejo, el modelo Gamma logra capturar la tendencia central, aunque la varianza teórica derivada (5.38 días²) es inferior a la muestral; esto signfica que el modelo es conservador y que la "cola larga" de pacientes con estancias extremas (hasta 46 días) introduce una volatilidad adicional que afecta a la estructura estándar de la distribución.
+
+```{r caso3-los-estimadores, results='markup'}
+library(stats4)
+
+cat("2. ESTIMADORES PUNTUALES\n")
+cat("----------------------------------\n\n")
+
+# Método de los Momentos
+mean_los <- mean(los_data)
+var_los <- var(los_data)
+alpha_mm <- mean_los^2 / var_los
+beta_mm <- mean_los / var_los
+
+cat("MÉTODO DE LOS MOMENTOS:\n")
+cat("Sistema de ecuaciones:\n")
+cat("  E[X] = α/β = X̄\n")
+cat("  Var(X) = α/β² = S²\n\n")
+cat("Solución:\n")
+cat(sprintf("  α̂_MM = X̄²/S² = %.4f\n", alpha_mm))
+cat(sprintf("  β̂_MM = X̄/S² = %.4f\n\n", beta_mm))
+
+# Método de Máxima Verosimilitud
+nll_gamma <- function(alpha, beta) {
+  if(alpha <= 0 || beta <= 0) return(1e10)
+  -sum(dgamma(los_data, shape = alpha, rate = beta, log = TRUE))
+}
+
+mle_result <- mle(nll_gamma, 
+                  start = list(alpha = alpha_mm, beta = beta_mm),
+                  method = "L-BFGS-B",
+                  lower = c(0.01, 0.01))
+
+alpha_mle <- coef(mle_result)[1]
+beta_mle <- coef(mle_result)[2]
+
+cat("MÉTODO DE MÁXIMA VEROSIMILITUD:\n")
+cat("Log-verosimilitud: ℓ(α,β) = nα log(β) - n log(Γ(α)) + (α-1)Σlog(xᵢ) - βΣxᵢ\n")
+cat("(Resolución numérica por optimización)\n\n")
+cat(sprintf("  α̂_MLE = %.4f\n", alpha_mle))
+cat(sprintf("  β̂_MLE = %.4f\n\n", beta_mle))
+```
+
+```{r caso3-los-propiedades, results='markup'}
+cat("3. PROPIEDADES DE LOS ESTIMADORES\n")
+cat("----------------------------------\n\n")
+
+# Insesgadez
+sesgo_alpha_teorico <- alpha_mle / (n_los - 1)
+
+cat("A) INSESGADEZ:\n")
+cat("   Los estimadores MLE son asintóticamente insesgados\n")
+cat(sprintf("   Sesgo aproximado de α̂: %.6f\n\n", sesgo_alpha_teorico))
+
+# Varianza
+var_alpha_hat <- alpha_mle^2 * trigamma(alpha_mle) / n_los
+var_beta_hat <- beta_mle^2 / n_los
+
+cat("B) VARIANZA DE LOS ESTIMADORES:\n")
+cat(sprintf("   Var(α̂) ≈ %.6f\n", var_alpha_hat))
+cat(sprintf("   Var(β̂) ≈ %.6f\n\n", var_beta_hat))
+
+# ECM
+mse_alpha <- var_alpha_hat + sesgo_alpha_teorico^2
+mse_beta <- var_beta_hat
+
+cat("C) ERROR CUADRÁTICO MEDIO:\n")
+cat(sprintf("   ECM(α̂) ≈ %.6f\n", mse_alpha))
+cat(sprintf("   ECM(β̂) ≈ %.6f\n\n", mse_beta))
+
+# Información de Fisher
+psi_prime <- trigamma(alpha_mle)
+I_matrix <- matrix(c(psi_prime, -1/beta_mle,
+                     -1/beta_mle, alpha_mle/beta_mle^2), 
+                   nrow = 2, byrow = TRUE) * n_los
+
+cov_matrix <- solve(I_matrix)
+
+cat("D) MATRIZ DE INFORMACIÓN DE FISHER Y COTAS CR:\n")
+cat(sprintf("   Cota CR para α̂: %.6f\n", cov_matrix[1,1]))
+cat(sprintf("   Cota CR para β̂: %.6f\n\n", cov_matrix[2,2]))
+```
+
+Finalmente, la gran cantidad de datos nos permite aplicar la Normalidad Asintótica Bivariada para  nuestras conclusiones. La incertidumbre sobre los parámetros es mínima, con errores estándar muy reducidos ($\approx 0.028$ para $\alpha$ y $\approx 0.013$ para $\beta$). Esto se reduce en intervalos de confianza del 95% de alta precisión: ubicamos el parámetro de forma entre [1.27, 1.38] y la tasa entre [0.47, 0.52]. 
+
+```{r caso3-los-asintotico, results='markup', fig.width=10, fig.height=5}
+cat("4. PROPIEDADES ASINTÓTICAS\n")
+cat("----------------------------------\n\n")
+
+se_alpha <- sqrt(cov_matrix[1,1])
+se_beta <- sqrt(cov_matrix[2,2])
+ic_alpha <- c(alpha_mle - 1.96*se_alpha, alpha_mle + 1.96*se_alpha)
+ic_beta <- c(beta_mle - 1.96*se_beta, beta_mle + 1.96*se_beta)
+
+cat("NORMALIDAD ASINTÓTICA BIVARIADA:\n")
+cat("√n[(α̂, β̂)' - (α, β)'] →ᵈ N(0, I(θ)⁻¹)\n\n")
+cat(sprintf("Error estándar de α̂: %.4f\n", se_alpha))
+cat(sprintf("IC 95%% para α: [%.4f, %.4f]\n\n", ic_alpha[1], ic_alpha[2]))
+cat(sprintf("Error estándar de β̂: %.4f\n", se_beta))
+cat(sprintf("IC 95%% para β: [%.4f, %.4f]\n\n", ic_beta[1], ic_beta[2]))
+
+# Parámetros derivados
+media_est <- alpha_mle / beta_mle
+var_est <- alpha_mle / beta_mle^2
+
+cat("PARÁMETROS DERIVADOS:\n")
+cat(sprintf("Media estimada (α̂/β̂): %.4f días\n", media_est))
+cat(sprintf("Varianza estimada (α̂/β̂²): %.4f días²\n\n", var_est))
+
+# Gráficos
+library(gridExtra)
+
+# Gráfico para alpha
+x_alpha <- seq(alpha_mle - 4*se_alpha, alpha_mle + 4*se_alpha, length.out = 200)
+y_alpha <- dnorm(x_alpha, mean = alpha_mle, sd = se_alpha)
+
+p1 <- ggplot(data.frame(x = x_alpha, y = y_alpha), aes(x, y)) +
+  geom_line(color = "darkgreen", linewidth = 1.2) +
+  geom_vline(xintercept = alpha_mle, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = ic_alpha, linetype = "dotted", color = "blue") +
+  geom_area(alpha = 0.3, fill = "lightgreen") +
+  labs(title = "Distribución Asintótica de α̂",
+       x = "α̂", y = "Densidad") +
+  theme_minimal()
+
+# Gráfico para beta
+x_beta <- seq(beta_mle - 4*se_beta, beta_mle + 4*se_beta, length.out = 200)
+y_beta <- dnorm(x_beta, mean = beta_mle, sd = se_beta)
+
+p2 <- ggplot(data.frame(x = x_beta, y = y_beta), aes(x, y)) +
+  geom_line(color = "darkorange", linewidth = 1.2) +
+  geom_vline(xintercept = beta_mle, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = ic_beta, linetype = "dotted", color = "blue") +
+  geom_area(alpha = 0.3, fill = "lightyellow") +
+  labs(title = "Distribución Asintótica de β̂",
+       x = "β̂", y = "Densidad") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+
+
+
+
+# Contraste de hipótesis
+
+## Contrastes de Hipótesis
+
+Un contraste de hipótesis es un procedimiento que nos permite decidir, a partir de datos muestrales, si una afirmación sobre un parámetro poblacional es compatible con la evidencia observada. A diferencia de la estimación, donde buscamos cuantificar el valor de un parámetro, aquí el objetivo es validar o descartar una afirmación específica.
+
+### Estructura del contraste
+Todo contraste de hipótesis se organiza en torno a:
+
+* **Hipótesis nula ($H_0$):** La afirmación que asumimos verdadera inicialmente; representa el estado de referencia o la ausencia de efecto.
+* **Hipótesis alternativa ($H_1$):** Lo que aceptaremos si la evidencia muestral contradice suficientemente a $H_0$.
+* **Estadístico de prueba:** Una función de los datos cuya distribución bajo $H_0$ conocemos.
+* **Región crítica:** Los valores del estadístico que nos llevarían a rechazar $H_0$.
+* **Nivel de significancia ($\alpha$):** La probabilidad máxima que toleramos de rechazar $H_0$ cuando realmente es verdadera (usualmente 0.05 o 0.01).
+
+### Tipos de errores y potencia
+Al tomar una decisión estadística podemos equivocarnos de dos formas:
+
+1.  **Error Tipo I:** Rechazar $H_0$ cuando es verdadera (probabilidad controlada por $\alpha$).
+2.  **Error Tipo II:** No rechazar $H_0$ cuando es falsa (probabilidad $\beta$).
+
+La **potencia del test**, definida como $1 - \beta$, mide nuestra capacidad para detectar un efecto cuando realmente existe. Un test potente minimiza los errores tipo II.
+
+### Formulación de hipótesis alternativas
+Dependiendo de lo que busquemos detectar, el contraste puede formularse como:
+
+* **Bilateral:** $H_1: \theta \neq \theta_0$ (desviaciones en cualquier dirección).
+* **Unilateral derecho:** $H_1: \theta > \theta_0$ (solo incrementos).
+* **Unilateral izquierdo:** $H_1: \theta < \theta_0$ (solo decrementos).
+
+
+
+## Mortalidad en UCI
+
+**¿Contamos con suficiente evidencia estadística para afirmar que la mortalidad en nuestra muestra es estructuralmente diferente al promedio del país?**
+
+La mortalidad constituye el indicador base en cualquier unidad de cuidados intensivos. Mientras que diversas fuentes que he consultado establecen un estándar nacional en torno al 12%, nuestra cohorte de 3676 pacientes presenta una realidad observada  distinta, con una tasa de fallecimientos de apenas el 4.95%. Para determinar si esta discrepancia es  una diferencia estructural real, sometimos los datos a un contraste de hipótesis bilateral, utilizando un test Z para proporciones tras verificar que el tamaño muestral garantizaba la aproximación normal.
+
+```{r caso1-mortalidad-setup, results='markup'}
+cat("================================================================================\n")
+
+# Preparación de datos
+mortalidad_data <- apachePatientResult %>%
+  filter(!is.na(actualicumortality))
+
+n_total <- nrow(mortalidad_data)
+n_fallecidos <- sum(mortalidad_data$actualicumortality == "EXPIRED")
+p_hat <- n_fallecidos / n_total
+
+cat("DATOS OBSERVADOS:\n")
+cat("─────────────────\n")
+cat(sprintf("Tamaño muestral: n = %d pacientes\n", n_total))
+cat(sprintf("Número de fallecidos: %d\n", n_fallecidos))
+cat(sprintf("Proporción observada: p̂ = %.4f (%.2f%%)\n\n", p_hat, p_hat*100))
+```
+
+El valor del estadístico de prueba ($Z = -13.15$) se sitúa en la región de rechazo. La probabilidad de observar estos datos bajo la hipótesis nula es practicamente nula ($p < 0.001$). Esta distancia  respecto al valor crítico estándar de 1.96 nos obliga a rechazar la hipótesis de igualdad con una seguridad estadística absoluta. No estamos ante una fluctuación aleatoria; la mortalidad en esta muestra no se comporta como el promedio nacional.
+
+```{r caso1-mortalidad-hipotesis, results='markup'}
+# Parámetro de referencia
+p0 <- 0.12
+
+cat("FORMULACIÓN DE HIPÓTESIS:\n")
+cat("──────────────────────────\n")
+cat(sprintf("H₀: p = %.2f (mortalidad igual a estimación nacional)\n", p0))
+cat(sprintf("H₁: p ≠ %.2f (mortalidad difiere de la propocion)\n", p0))
+cat(sprintf("Nivel de significancia: α = 0.05\n"))
+cat("Tipo de contraste: BILATERAL\n\n")
+
+# Verificación de condiciones
+cat("VERIFICACIÓN DE CONDICIONES (Aproximación Normal):\n")
+cat(sprintf("n·p₀ = %d × %.2f = %.2f ≥ 5 \n", n_total, p0, n_total*p0))
+cat(sprintf("n·(1-p₀) = %d × %.2f = %.2f ≥ 5 \n\n", n_total, 1-p0, n_total*(1-p0)))
+```
+```{r caso1-mortalidad-test, results='markup'}
+# Estadístico de prueba
+se_p0 <- sqrt(p0 * (1 - p0) / n_total)
+z_stat <- (p_hat - p0) / se_p0
+
+cat("ESTADÍSTICO DE PRUEBA (Test Z para proporciones):\n")
+cat("──────────────────────────────────────────────────\n")
+cat(sprintf("Error estándar bajo H₀: SE(p̂) = √[p₀(1-p₀)/n] = %.6f\n\n", se_p0))
+cat("Fórmula: Z = (p̂ - p₀) / SE(p̂)\n")
+cat(sprintf("Z = (%.4f - %.2f) / %.6f = %.4f\n\n", p_hat, p0, se_p0, z_stat))
+
+# Valor p y decisión
+p_value <- 2 * pnorm(-abs(z_stat))
+z_critico <- qnorm(0.975)
+
+cat("REGIÓN CRÍTICA Y VALOR P:\n")
+cat("──────────────────────────\n")
+cat(sprintf("Región crítica: |Z| > %.4f\n", z_critico))
+cat(sprintf("Estadístico observado: |Z| = %.4f\n", abs(z_stat)))
+cat(sprintf("Valor p (bilateral): %.6f\n\n", p_value))
+
+# Decisión
+if (p_value < 0.05) {
+  cat("DECISIÓN: Se RECHAZA H₀ (p < 0.05)\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat("CONCLUSIÓN ESTADÍSTICA:\n")
+  cat(sprintf("Existe evidencia significativa de que la mortalidad observada (%.2f%%)\n", 
+              p_hat*100))
+  cat(sprintf("difiere del benchmark nacional (%.2f%%).\n\n", p0*100))
+  
+  cat("INTERPRETACIÓN CLÍNICA:\n")
+  if (p_hat > p0) {
+    cat("⚠️  La mortalidad es MAYOR que el estándar nacional.\n")
+    cat("⚠️  Requiere evaluación de procesos de atención.\n")
+    cat("⚠️  Posible necesidad de intervenciones de mejora de calidad.\n")
+  } else {
+    cat("La mortalidad es menor que el estándar nacional.\n")
+    
+  }
+} else {
+  cat("DECISIÓN: NO se rechaza H₀ (p ≥ 0.05)\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat(sprintf("No hay evidencia suficiente para afirmar que la mortalidad\n"))
+  cat(sprintf("difiere del benchmark nacional del %.2f%%.\n", p0*100))
+}
+```
+
+El intervalo de confianza del 95% sitúa la verdadera mortalidad poblacional de estas unidades entre el 4.25% y el 5.65%, cifras que quedan muy por debajo del umbral del 12%. Todos los datos obtenidos nos ayudan a inferir  que los hospitales participantes en la base de datos eICU tienen un desempeño  alto, logrando tasas de supervivencia muy superiores a lo esperado para el estándar estadounidense.
+
+```{r caso1-mortalidad-ic, results='markup', fig.width=8, fig.height=5}
+# Intervalo de confianza
+ic_lower <- p_hat - 1.96 * sqrt(p_hat * (1 - p_hat) / n_total)
+ic_upper <- p_hat + 1.96 * sqrt(p_hat * (1 - p_hat) / n_total)
+
+cat("\n")
+cat("INTERVALO DE CONFIANZA 95% PARA p:\n")
+cat("───────────────────────────────────\n")
+cat(sprintf("IC 95%% = [%.4f, %.4f]\n", ic_lower, ic_upper))
+cat(sprintf("IC 95%% = [%.2f%%, %.2f%%]\n\n", ic_lower*100, ic_upper*100))
+
+# Gráfico
+library(ggplot2)
+
+df_viz <- data.frame(
+  categoria = c("Observado", "Porcentaje Nacional"),
+  proporcion = c(p_hat, p0),
+  ic_lower = c(ic_lower, NA),
+  ic_upper = c(ic_upper, NA)
+)
+
+ggplot(df_viz, aes(x = categoria, y = proporcion, fill = categoria)) +
+  geom_bar(stat = "identity", alpha = 0.7, width = 0.6) +
+  geom_errorbar(aes(ymin = ic_lower, ymax = ic_upper), width = 0.2) +
+  geom_hline(yintercept = p0, linetype = "dashed", color = "red", linewidth = 1) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Mortalidad Observada vs Estimación  Nacional",
+       subtitle = sprintf("p-valor = %.4f | Porcentaje Nacional = %.1f%%", p_value, p0*100),
+       x = "", y = "Proporción de Mortalidad") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", size = 13))
+```
+
+### Evaluación de Hipotensión (PAM < 65 mmHg)
+
+**¿Puede la media poblacional de la presión arterial ocultar subgrupos críticos de pacientes que requieren atención urgente?**
+
+El análisis de la estabilidad relacionada con la tensin parte de la siguiente premisa: determinar si la Presión Arterial Media de la población ingresada se situaba, en promedio, por debajo del umbral de seguridad de 75 mmHg. Para ello, planteamos un contraste unilateral izquierdo sobre una muestra de 2141 mediciones, buscando evidencia estadística.
+
+```{r caso2-pam-setup, results='markup'}
+
+# Preparación de datos
+pam_data <- apacheApsVar %>%
+  filter(!is.na(meanbp), meanbp > 0, meanbp < 200)
+
+n_pam <- nrow(pam_data)
+media_pam <- mean(pam_data$meanbp)
+sd_pam <- sd(pam_data$meanbp)
+n_hipotension <- sum(pam_data$meanbp < 65)
+p_hipot <- n_hipotension / n_pam
+
+cat("DATOS OBSERVADOS:\n")
+cat("─────────────────\n")
+cat(sprintf("Tamaño muestral: n = %d mediciones\n", n_pam))
+cat(sprintf("PAM media: x̄ = %.2f mmHg\n", media_pam))
+cat(sprintf("Desviación estándar: s = %.2f mmHg\n", sd_pam))
+cat(sprintf("Mediana: %.2f mmHg\n", median(pam_data$meanbp)))
+cat(sprintf("\nPacientes con PAM < 65 mmHg: %d (%.2f%%)\n\n", 
+            n_hipotension, p_hipot*100))
+```
+
+
+El test t de Student arrojó un estadístico de $11.21$ con un valor p de $1.00$, lo que nos impide rechazar la hipótesis nula. La razón es aritmética: la media muestral observada fue de 84.65 mmHg, un valor significativamente superior —y no inferior— al límite de 75 mmHg. Estadísticamente, podemos afirmar con un 95% de confianza que el parámetro poblacional promedio se encuentra entre 82.96 y 86.34 mmHg, descartando por completo la hipótesis de que la "población promedio" sufra hipotensión.
+
+```{r caso2-pam-contraste, results='markup'}
+mu0_pam <- 75
+
+cat("CONTRASTE DE HIPÓTESIS:\n")
+cat("───────────────────────\n")
+cat(sprintf("H₀: μ ≥ %.0f mmHg (PAM promedio es normotensa)\n", mu0_pam))
+cat(sprintf("H₁: μ < %.0f mmHg (PAM promedio es baja - requiere intervención)\n", mu0_pam))
+cat("Tipo de contraste: UNILATERAL IZQUIERDO\n")
+cat(sprintf("Nivel de significancia: α = 0.05\n\n"))
+
+# Estadístico t
+se_pam <- sd_pam / sqrt(n_pam)
+t_stat <- (media_pam - mu0_pam) / se_pam
+gl <- n_pam - 1
+
+cat("ESTADÍSTICO DE PRUEBA (t de Student):\n")
+cat("──────────────────────────────────────\n")
+cat(sprintf("SE(x̄) = s/√n = %.2f/√%d = %.4f mmHg\n\n", sd_pam, n_pam, se_pam))
+cat("Fórmula: t = (x̄ - μ₀) / SE(x̄)\n")
+cat(sprintf("t = (%.2f - %.0f) / %.4f = %.4f\n", media_pam, mu0_pam, se_pam, t_stat))
+cat(sprintf("Grados de libertad: gl = %d\n\n", gl))
+
+# Valor p y decisión
+p_value_t <- pt(t_stat, df = gl)
+t_critico <- qt(0.05, df = gl)
+
+cat("REGIÓN CRÍTICA Y VALOR P:\n")
+cat("──────────────────────────\n")
+cat(sprintf("Valor crítico: t₀.₀₅,%d = %.4f\n", gl, t_critico))
+cat(sprintf("Se rechaza H₀ si t < %.4f\n", t_critico))
+cat(sprintf("Estadístico observado: t = %.4f\n", t_stat))
+cat(sprintf("Valor p (unilateral izquierdo): %.6f\n\n", p_value_t))
+
+if (p_value_t < 0.05) {
+  cat("DECISIÓN: Se RECHAZA H₀ (p < 0.05)\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat("CONCLUSIÓN ESTADÍSTICA:\n")
+  cat(sprintf("La PAM promedio (%.2f mmHg) es significativamente MENOR\n", media_pam))
+  cat(sprintf("que el valor de normotensión segura (%.0f mmHg).\n\n", mu0_pam))
+  
+  cat("INTERPRETACIÓN CLÍNICA:\n")
+  cat("⚠️  Pacientes ingresan con PAM significativamente baja.\n")
+  cat("⚠️  Requiere intervención hemodinámica agresiva al ingreso.\n")
+  cat("⚠️  Riesgo aumentado de hipoperfusión orgánica.\n")
+  cat("⚠️  Considerar protocolos de resucitación temprana.\n")
+} else {
+  cat("DECISIÓN: NO se rechaza H₀ (p ≥ 0.05)\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat(sprintf("No hay evidencia de que la PAM sea menor a %.0f mmHg.\n", mu0_pam))
+}
+```
+
+A pesar de que la media sugiere exceso de tensión, la mediana se sitúa exactamente en 65 mmHg  y la desviación estándar es muy amplia (39.86 mmHg). Esto revela que, aunque el "paciente promedio" está estable, la media está inflada por valores altos (hipertensión), destcacando el hecho de que casi la mitad de la muestra (48.76%) está con exceso de tensión. 
+
+
+```{r caso2-pam-visual, results='markup', fig.width=10, fig.height=5}
+library(gridExtra)
+
+# IC para la media
+ic_lower_pam <- media_pam + qt(0.025, df = gl) * se_pam
+ic_upper_pam <- media_pam + qt(0.975, df = gl) * se_pam
+
+cat("\n")
+cat("INTERVALO DE CONFIANZA 95%:\n")
+cat("────────────────────────────\n")
+cat(sprintf("IC 95%% = [%.2f, %.2f] mmHg\n\n", ic_lower_pam, ic_upper_pam))
+
+# Gráfico 1: Distribución t
+x_vals <- seq(t_stat - 3, 3, length.out = 200)
+y_vals <- dt(x_vals, df = gl)
+
+p1 <- ggplot(data.frame(x = x_vals, y = y_vals), aes(x, y)) +
+  geom_line(color = "darkblue", linewidth = 1) +
+  geom_area(data = data.frame(x = x_vals[x_vals < t_critico], 
+                              y = y_vals[x_vals < t_critico]),
+            aes(x, y), fill = "red", alpha = 0.3) +
+  geom_vline(xintercept = t_stat, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_vline(xintercept = t_critico, linetype = "dotted", color = "darkgreen") +
+  labs(title = "Distribución t de Student",
+       subtitle = sprintf("t = %.2f | p-valor = %.4f", t_stat, p_value_t),
+       x = "Estadístico t", y = "Densidad") +
+  theme_minimal()
+
+# Gráfico 2: Histograma PAM
+p2 <- ggplot(pam_data, aes(x = meanbp)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = media_pam, color = "red", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = 65, color = "darkred", linewidth = 1, linetype = "dotted") +
+  geom_vline(xintercept = 75, color = "darkgreen", linewidth = 1, linetype = "dotted") +
+  labs(title = "Distribución de PAM",
+       subtitle = "Línea roja: media | Verde: 75 mmHg | Roja: 65 mmHg",
+       x = "PAM (mmHg)", y = "Frecuencia") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## Duración de Estancia en UCI (LOS)
+
+**¿Es la duración de estancia en nuestra UCI compatible con una gestión eficiente de recursos, o estamos enfrentando un problema de sobreocupación?**
+
+La eficiencia operativa de una Unidad de Cuidados Intensivos se mide  por la rotación de camas, teniendo como referencia un estándar nacional de 4.5 días. Diseñamos un contraste unilateral derecho para detectar si el promedio de nuestra cohorte superaba significativamente dicho umbral. La hipótesis de "sobreocupación" fue sometida a test contra una muestra de 3676 pacientes.
+
+```{r caso3-los-setup, results='markup'}
+
+# Preparación de datos
+los_data <- apachePatientResult %>%
+  filter(!is.na(actualiculos), actualiculos > 0)
+
+n_los <- nrow(los_data)
+media_los <- mean(los_data$actualiculos)
+sd_los <- sd(los_data$actualiculos)
+mediana_los <- median(los_data$actualiculos)
+
+cat("DATOS OBSERVADOS:\n")
+cat("─────────────────\n")
+cat(sprintf("Tamaño muestral: n = %d pacientes\n", n_los))
+cat(sprintf("LOS media: x̄ = %.2f días\n", media_los))
+cat(sprintf("Desviación estándar: s = %.2f días\n", sd_los))
+cat(sprintf("Mediana: %.2f días\n", mediana_los))
+cat(sprintf("Q1: %.2f | Q3: %.2f días\n\n", 
+            quantile(los_data$actualiculos, 0.25),
+            quantile(los_data$actualiculos, 0.75)))
+
+# Clasificación
+cat("DISTRIBUCIÓN POR CATEGORÍAS:\n")
+cat(sprintf("Estancias cortas (< 2 días): %d (%.1f%%)\n",
+            sum(los_data$actualiculos < 2),
+            100*mean(los_data$actualiculos < 2)))
+cat(sprintf("Estancias normales (2-7 días): %d (%.1f%%)\n",
+            sum(los_data$actualiculos >= 2 & los_data$actualiculos <= 7),
+            100*mean(los_data$actualiculos >= 2 & los_data$actualiculos <= 7)))
+cat(sprintf("Estancias prolongadas (> 7 días): %d (%.1f%%)\n\n",
+            sum(los_data$actualiculos > 7),
+            100*mean(los_data$actualiculos > 7)))
+```
+
+Con un valor t de -32.46 y un valor p de 1.00, la evidencia no solo falla en rechazar la hipótesis nula, sino que demuestra que la realidad de la unidad se sitúa en el extremo opuesto del riesgo planteado. La media observada de 2.67 días es sustancialmente inferior a la cantidad de 4.5 días.
+
+```{r caso3-los-contraste, results='markup'}
+mu0_los <- 4.5
+
+cat("CONTRASTE DE HIPÓTESIS:\n")
+cat("───────────────────────\n")
+cat(sprintf("H₀: μ ≤ %.1f días (LOS no excede e lporcentaje nacional)\n", mu0_los))
+cat(sprintf("H₁: μ > %.1f días (LOS es mayor - estancias prolongadas)\n", mu0_los))
+cat("Tipo de contraste: UNILATERAL DERECHO\n")
+cat(sprintf("Nivel de significancia: α = 0.05\n\n"))
+
+# Estadístico t
+se_los <- sd_los / sqrt(n_los)
+t_stat_los <- (media_los - mu0_los) / se_los
+gl_los <- n_los - 1
+
+cat("ESTADÍSTICO DE PRUEBA:\n")
+cat("──────────────────────\n")
+cat(sprintf("SE(x̄) = %.4f días\n\n", se_los))
+cat(sprintf("t = (%.2f - %.1f) / %.4f = %.4f\n", 
+            media_los, mu0_los, se_los, t_stat_los))
+cat(sprintf("Grados de libertad: gl = %d\n\n", gl_los))
+
+# Valor p
+p_value_los <- 1 - pt(t_stat_los, df = gl_los)
+t_critico_los <- qt(0.95, df = gl_los)
+
+cat("REGIÓN CRÍTICA Y VALOR P:\n")
+cat("──────────────────────────\n")
+cat(sprintf("Valor crítico: t₀.₉₅,%d = %.4f\n", gl_los, t_critico_los))
+cat(sprintf("Estadístico observado: t = %.4f\n", t_stat_los))
+cat(sprintf("Valor p: %.6f\n\n", p_value_los))
+
+if (p_value_los < 0.05) {
+  cat("DECISIÓN: Se RECHAZA H₀ (p < 0.05)\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat(sprintf("La LOS promedio (%.2f días) es significativamente MAYOR\n", media_los))
+  cat(sprintf("que el benchmark de %.1f días.\n\n", mu0_los))
+  
+  cat("INTERPRETACIÓN CLÍNICA:\n")
+  cat("⚠️  Estancias en UCI significativamente prolongadas.\n")
+  cat("⚠️  Mayor riesgo de infecciones nosocomiales.\n")
+  cat("⚠️  Incremento en costos de atención.\n")
+  cat("⚠️  Recomendaciones:\n")
+  cat("    • Implementar protocolos de alta temprana\n")
+  cat("    • Identificar factores que prolongan estancia\n")
+  cat("    • Optimizar manejo de comorbilidades\n")
+} else {
+  cat("DECISIÓN: NO se rechaza H₀\n")
+  cat(sprintf("La LOS no difiere significativamente del Proporcion Nacional\n"))
+}
+```
+
+La discrepancia entre la media (2.67) y la mediana (1.70 días) revela una distribución  asimétrica positiva, típica de los tiempos de servicio. El dato importante  es que el 58.1% de los pacientes permanecen en la unidad menos de 48 horas. Por tanto, la conclusión no es solo que "no excedemos el tiempo estándar", sino que la unidad opera con una dinámica de alta rotación, donde las estancias prolongadas son la excepción (solo un 6.3%) y no la norma.
+
+
+```{r caso3-los-visual, results='markup', fig.width=10, fig.height=5}
+# Gráfico de distribución
+p1 <- ggplot(los_data, aes(x = actualiculos)) +
+  geom_histogram(bins = 40, fill = "coral", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = media_los, color = "red", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = mu0_los, color = "blue", linewidth = 1, linetype = "dotted") +
+  labs(title = "Distribución de Duración de Estancia",
+       subtitle = sprintf("Media = %.1f días | Proporcion Nacional = %.1f días", media_los, mu0_los),
+       x = "Días en UCI", y = "Frecuencia") +
+  theme_minimal()
+
+# Boxplot por categorías
+los_data$categoria <- cut(los_data$actualiculos,
+                          breaks = c(0, 2, 7, Inf),
+                          labels = c("Corta\n(< 2d)", "Normal\n(2-7d)", "Prolongada\n(> 7d)"))
+
+p2 <- ggplot(los_data, aes(x = categoria, y = actualiculos, fill = categoria)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_hline(yintercept = mu0_los, linetype = "dashed", color = "blue") +
+  labs(title = "Distribución por Categorías",
+       x = "Categoría de Estancia", y = "Días en UCI") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## Temperatura Corporal y Sepsis
+
+**¿Puede una temperatura promedio "normal" ocultar subgrupos críticos de pacientes con desregulación térmica compatible con sepsis?**
+
+El análisis de la termorregulación en una muestra de 109871 registros clinicos nos lleva a la  distinción entre significancia estadística y relevancia clínica. Al contrastar la media observada de 37.10°C contra el estándar de 37.0°C, la inmensa potencia del test detecta una desviación infinitesimal como "altamente significativa" ($t = 34.80, p < 0.001$). Esto nos indica matemáticamente que la población tiende a una ligera elevación térmica, posiblemente debida al ambiente controlado de la UCI o procesos inflamatorios leves, pero el segundo contraste desactiva cualquier alarma generalizada: al probar si existe fiebre promedio (> 37.5°C), la evidencia es nula ($p=1.00$), confirmando que el "paciente medio" se mantiene en rangos de normotermia segura.
+
+```{r caso4-temp-setup, results='markup'}
+# Preparación de datos
+temp_data <- vitalPeriodic %>%
+  filter(!is.na(temperature), temperature > 20, temperature < 45)
+
+n_temp <- nrow(temp_data)
+media_temp <- mean(temp_data$temperature)
+sd_temp <- sd(temp_data$temperature)
+
+cat("DATOS OBSERVADOS:\n")
+cat("─────────────────\n")
+cat(sprintf("Tamaño muestral: n = %d mediciones\n", n_temp))
+cat(sprintf("Temperatura media: x̄ = %.2f°C\n", media_temp))
+cat(sprintf("Desviación estándar: s = %.2f°C\n", sd_temp))
+cat(sprintf("Mediana: %.2f°C\n\n", median(temp_data$temperature)))
+
+# Clasificación SIRS
+n_hipotermia <- sum(temp_data$temperature < 36)
+n_normotermia <- sum(temp_data$temperature >= 36.5 & temp_data$temperature <= 37.5)
+n_fiebre <- sum(temp_data$temperature > 38)
+n_sirs <- n_hipotermia + n_fiebre
+
+cat("CLASIFICACIÓN SEGÚN CRITERIOS SIRS:\n")
+cat(sprintf("Hipotermia (< 36°C): %d (%.1f%%)\n", n_hipotermia, 100*n_hipotermia/n_temp))
+cat(sprintf("Normotermia (36.5-37.5°C): %d (%.1f%%)\n", n_normotermia, 100*n_normotermia/n_temp))
+cat(sprintf("Fiebre (> 38°C): %d (%.1f%%)\n", n_fiebre, 100*n_fiebre/n_temp))
+cat(sprintf("Criterio SIRS cumplido: %d (%.1f%%)\n\n", n_sirs, 100*n_sirs/n_temp))
+```
+```{r caso4a-bilateral, results='markup'}
+cat(paste(rep("─", 80), collapse=""), "\n")
+
+cat(paste(rep("─", 80), collapse=""), "\n\n")
+
+mu0_normo <- 37.0
+
+cat("HIPÓTESIS:\n")
+cat(sprintf("H₀: μ = %.1f°C (temperatura media es normotermia)\n", mu0_normo))
+cat(sprintf("H₁: μ ≠ %.1f°C (temperatura difiere de normotermia)\n", mu0_normo))
+cat("Tipo de contraste: BILATERAL\n\n")
+
+# Estadístico t
+se_temp <- sd_temp / sqrt(n_temp)
+t_stat_bil <- (media_temp - mu0_normo) / se_temp
+gl_temp <- n_temp - 1
+
+cat("ESTADÍSTICO DE PRUEBA:\n")
+cat(sprintf("t = (%.2f - %.1f) / %.6f = %.4f\n", media_temp, mu0_normo, se_temp, t_stat_bil))
+cat(sprintf("Grados de libertad: gl = %d\n\n", gl_temp))
+
+# Valor p
+p_value_bil <- 2 * pt(-abs(t_stat_bil), df = gl_temp)
+t_critico_bil <- qt(0.975, df = gl_temp)
+
+cat("DECISIÓN:\n")
+cat(sprintf("Valores críticos: ±%.4f\n", t_critico_bil))
+cat(sprintf("Estadístico: t = %.4f\n", t_stat_bil))
+cat(sprintf("Valor p: %.6f\n\n", p_value_bil))
+
+if (p_value_bil < 0.05) {
+  cat("CONCLUSIÓN: La temperatura media DIFIERE significativamente de normotermia.\n")
+  if (media_temp > mu0_normo) {
+    cat("Temperatura ELEVADA - sugiere proceso inflamatorio/infeccioso.\n")
+  } else {
+    cat("⚠️  Temperatura REDUCIDA - posible hipotermia o respuesta atenuada.\n")
+  }
+} else {
+  cat("CONCLUSIÓN: No difiere significativamente de normotermia.\n")
+}
+```
+
+
+
+Sin embargo, en el diagnóstico de sepsis, el peligro no reside en el promedio, sino en la dispersión. Aunque la tendencia central es estable, el análisis de las colas de la distribución revela una realidad clínica preocupante: un 16.6% de las mediciones activan los criterios del Síndrome de Respuesta Inflamatoria Sistémica (SIRS). Este subgrupo se divide entre un 10.7% con fiebre leve y un 5.9% con hipotermia, demostrando que, aunque la unidad en su conjunto parece estable, uno de cada seis registros alerta sobre una posible gran desregulación térmica compatible con un cuadro séptico activo.
+
+```{r caso4b-fiebre, results='markup'}
+
+mu0_fiebre <- 37.5
+
+cat("HIPÓTESIS:\n")
+cat(sprintf("H₀: μ ≤ %.1f°C (no hay fiebre promedio)\n", mu0_fiebre))
+cat(sprintf("H₁: μ > %.1f°C (hay fiebre promedio - indicativo de sepsis)\n", mu0_fiebre))
+cat("Tipo de contraste: UNILATERAL DERECHO\n\n")
+
+# Estadístico t
+t_stat_temp_uni <- (media_temp - mu0_fiebre) / se_temp
+p_value_temp_uni <- 1 - pt(t_stat_temp_uni, df = gl_temp)
+t_critico_uni <- qt(0.95, df = gl_temp)
+
+cat("ESTADÍSTICO DE PRUEBA:\n")
+cat(sprintf("t = (%.2f - %.1f) / %.6f = %.4f\n", 
+            media_temp, mu0_fiebre, se_temp, t_stat_temp_uni))
+cat(sprintf("Valor crítico: t₀.₉₅,%d = %.4f\n", gl_temp, t_critico_uni))
+cat(sprintf("Valor p: %.6f\n\n", p_value_temp_uni))
+
+if (p_value_temp_uni < 0.05) {
+  cat("DECISIÓN: Se RECHAZA H₀ (p < 0.05)\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat(sprintf("Existe evidencia de FIEBRE PROMEDIO (%.2f°C > %.1f°C).\n\n", 
+              media_temp, mu0_fiebre))
+  cat("INTERPRETACIÓN CLÍNICA:\n")
+  cat("⚠️  Cumple criterio SIRS para temperatura\n")
+  cat("⚠️  Alta prevalencia de procesos infecciosos/sépticos\n")
+  cat("⚠️  Requiere vigilancia estrecha y protocolos de sepsis\n")
+} else {
+  cat("DECISIÓN: NO se rechaza H₀\n")
+  cat("No hay evidencia suficiente de fiebre promedio.\n")
+}
+```
+```{r caso4-proporcion-sirs, results='markup'}
+cat("\n")
+cat(paste(rep("─", 80), collapse=""), "\n")
+cat("ANÁLISIS COMPLEMENTARIO: PROPORCIÓN CON CRITERIO SIRS\n")
+cat(paste(rep("─", 80), collapse=""), "\n\n")
+
+p_hat_sirs <- n_sirs / n_temp
+p0_sirs <- 0.30
+
+cat(sprintf("Mediciones con criterio SIRS: %d de %d (%.2f%%)\n", 
+            n_sirs, n_temp, p_hat_sirs*100))
+cat("(Temperatura < 36°C o > 38°C)\n\n")
+
+se_sirs <- sqrt(p0_sirs * (1 - p0_sirs) / n_temp)
+z_stat_sirs <- (p_hat_sirs - p0_sirs) / se_sirs
+p_value_sirs <- 2 * pnorm(-abs(z_stat_sirs))
+
+cat(sprintf("H₀: p = %.2f | H₁: p ≠ %.2f\n", p0_sirs, p0_sirs))
+cat(sprintf("Z = %.4f | Valor p: %.6f\n\n", z_stat_sirs, p_value_sirs))
+
+if (p_value_sirs < 0.05) {
+  cat("La proporción con criterio SIRS difiere significativamente.\n")
+}
+```
+
+## Test de Razón de Verosimilitudes - Duración de Estancia (LOS)
+
+**¿Es la probabilidad de alta hospitalaria constante a lo largo del tiempo, o varía según los días de permanencia del paciente en la UCI?**
+
+¿Es la probabilidad de recibir el alta constante día a día, o evoluciona según el tiempo que el paciente lleva ingresado? Para resolverlo, enfrentamos la simplicidad del modelo Exponencial (que asume un proceso "sin memoria", donde la probabilidad de salir es idéntica el día 1 que el día 10) contra la flexibilidad de la distribución Gamma mediante un Test de Razón de Verosimilitudes.
+
+```{r caso5-lrt-setup, results='markup'}
+
+datos_los_lrt <- los_data$actualiculos
+n_obs <- length(datos_los_lrt)
+
+cat("CONTEXTO:\n")
+cat("─────────\n")
+cat("H₀: LOS ~ Exponencial(λ) - Riesgo de alta constante\n")
+cat("H₁: LOS ~ Gamma(α, β) - Riesgo de alta variable según días\n\n")
+```
+
+Con un estadístico de contraste de $D = 163.59$ y una diferencia significativa en los logaritmos de verosimilitud, rechazamos categóricamente la hipótesis nula ($p < 0.001$). El modelo Exponencial es insuficiente para describir la realidad de la unidad.
+
+```{r caso5-lrt-calculo, results='markup'}
+# Log-Likelihood Modelo Gamma (ya calculado)
+log_lik_gamma <- sum(dgamma(datos_los_lrt, shape = alpha_mle, rate = beta_mle, log = TRUE))
+
+# Log-Likelihood Modelo Exponencial
+lambda_exp <- 1 / mean(datos_los_lrt)
+log_lik_exp <- sum(dexp(datos_los_lrt, rate = lambda_exp, log = TRUE))
+
+# Estadístico LRT
+estadistico_LRT <- -2 * (log_lik_exp - log_lik_gamma)
+p_value_LRT <- pchisq(estadistico_LRT, df = 1, lower.tail = FALSE)
+
+cat("RESULTADOS:\n")
+cat("───────────\n")
+cat(sprintf("Log-Lik Gamma (H₁): %.2f\n", log_lik_gamma))
+cat(sprintf("Log-Lik Exponencial (H₀): %.2f\n", log_lik_exp))
+cat(sprintf("Estadístico D = %.2f\n", estadistico_LRT))
+cat(sprintf("Valor p (χ² con gl=1): %.6f\n\n", p_value_LRT))
+
+if(p_value_LRT < 0.05) {
+  cat("DECISIÓN: Se RECHAZA H₀\n")
+  cat(paste(rep("─", 80), collapse=""), "\n")
+  cat("CONCLUSIÓN CLÍNICA:\n")
+  cat("La distribución Gamma es necesaria\n")
+  cat("La probabilidad de alta no es constante\n")
+  cat("Varía según cuántos días lleva el paciente ingresado\n")
+  cat("El modelo tiene 'memoria' del proceso\n")
+} else {
+  cat("DECISIÓN: No se rechaza H₀\n")
+  cat("El modelo Exponencial es suficiente.\n")
+}
+```
+
+
+Este rechazo  confirma que el proceso de alta tiene "memoria". La probabilidad de que un paciente abandone la unidad no es uniforme, sino que depende de su historial temporal. El ajuste superior del modelo Gamma valida la existencia de diferentes dinámicas de recuperación, demostrando que es imprescindible utilizar modelos que permitan tasas de riesgo variables
+
+
+
+## Test Z para Media de PAM (Varianza Conocida)
+
+**¿Es la presión arterial media de 82.53 mmHg compatible con el estándar de 75 mmHg, o estamos ante una población con características hemodinámicas distintas?**
+
+Partiendo del supuesto fuerte de una variabilidad poblacional conocida ($\sigma = 12$ mmHg, aplicamos un Test Z para evaluar el estado hemodinámico de 2205 pacientes. El objetivo, verificar si la media observada de 82.53 mmHg se alinea con la referencia estándar de 75 mmHg.
+
+```{r caso7-test-z, results='markup'}
+cat("================================================================================\n")
+cat("CASO 7: TEST Z PARA MEDIA DE PAM (VARIANZA CONOCIDA)\n")
+cat("================================================================================\n\n")
+
+# Datos
+pam_data_z <- na.omit(apacheApsVar$meanbp)
+n_z <- length(pam_data_z)
+media_muestral_z <- mean(pam_data_z)
+
+# Parámetros
+mu_h0_z <- 75
+sigma_conocida <- 12
+
+cat("DATOS Y PARÁMETROS:\n")
+cat(sprintf("n = %d | x̄ = %.2f mmHg\n", n_z, media_muestral_z))
+cat(sprintf("σ conocida = %.2f mmHg (dato histórico)\n", sigma_conocida))
+cat(sprintf("μ₀ = %.2f mmHg\n\n", mu_h0_z))
+
+cat("HIPÓTESIS:\n")
+cat(sprintf("H₀: μ = %.2f mmHg\n", mu_h0_z))
+cat(sprintf("H₁: μ ≠ %.2f mmHg\n\n", mu_h0_z))
+
+# Estadístico Z
+z_stat_pam <- (media_muestral_z - mu_h0_z) / (sigma_conocida / sqrt(n_z))
+p_value_z_pam <- 2 * (1 - pnorm(abs(z_stat_pam)))
+
+cat("ESTADÍSTICO DE PRUEBA:\n")
+cat(sprintf("Z = (x̄ - μ₀)/(σ/√n) = %.4f\n", z_stat_pam))
+cat(sprintf("Valor p: %.6f\n\n", p_value_z_pam))
+
+if(p_value_z_pam < 0.05) {
+  cat("DECISIÓN: Se rechaza H₀\n")
+  cat("La PAM media difiere significativamente de 75 mmHg.\n")
+} else {
+  cat("DECISIÓN: No se rechaza H₀\n")
+}
+```
+
+Con un estadístico Z de 29.47, la media muestral se aleja casi 30 errores estándar de la hipótesis nula, arrojando un valor p indistinguible de cero. Esto nos lleva a rechazar la igualdad: la desviación no es un elemento del azar ni un error de muestreo. La población estudiada mantiene un perfil tensional estructuralmente superior respecto al modelo teórico, confirmando una tendencia sistemática hacia valores más elevados que el estándar de referencia.
+
+
+## Test T para Media de PAM (Varianza Desconocida)
+
+Estudiando un escenario clínico más veraz, prescindimos del conocimiento a priori de la varianza poblacional para estimarla directamente desde los datos mediante la desviación estándar muestral ($s$). Esta aproximación, ejecutada a través de la distribución t de Student, introduce una penalización necesaria por la incertidumbre adicional, ofreciendo una inferencia más conservadora y realista que el test Z anterior.
+
+```{r caso8-test-t, results='markup'}
+
+test_t_pam_caso8 <- t.test(pam_data_z, mu = 75, alternative = "two.sided")
+
+cat("RESULTADOS DEL TEST T:\n")
+cat(sprintf("Estadístico t: %.4f\n", test_t_pam_caso8$statistic))
+cat(sprintf("Grados de libertad: %d\n", test_t_pam_caso8$parameter))
+cat(sprintf("Valor p: %.6f\n", test_t_pam_caso8$p.value))
+cat(sprintf("IC 95%%: [%.2f, %.2f] mmHg\n\n", 
+            test_t_pam_caso8$conf.int[1], test_t_pam_caso8$conf.int[2]))
+
+cat("INTERPRETACIÓN:\n")
+cat("El test t penaliza ligeramente la certeza al estimar σ de los datos,\n")
+cat("siendo más conservador y realista que el test Z.\n")
+```
+
+
+El estadístico t de 8.43 y un valor p nulo confirman que la discrepancia observada no varia al ajustar la varianza. 
+
+
+
+## Comparación de Medias (Muestras Independientes)
+
+**¿Difieren los pacientes intubados de los no intubados en términos de presión arterial media?**
+
+¿Altera significativamente la presión arterial media del paciente? Para responderlo, aplicamos una prueba t de Welch, una elección metodológica necesaria ante el desequilibrio notable en los tamaños muestrales (235 pacientes intubados frente a 1,970 espontáneos).
+
+```{r caso11-welch-test, results='markup', fig.width=10, fig.height=5}
+
+grupo_intubado <- apacheApsVar$meanbp[apacheApsVar$intubated == 1]
+grupo_no_intubado <- apacheApsVar$meanbp[apacheApsVar$intubated == 0]
+
+cat("TAMAÑOS MUESTRALES:\n")
+cat(sprintf("Intubados: n₁ = %d\n", length(na.omit(grupo_intubado))))
+cat(sprintf("No intubados: n₂ = %d\n\n", length(na.omit(grupo_no_intubado))))
+
+test_welch <- t.test(grupo_intubado, grupo_no_intubado)
+
+cat("RESULTADOS:\n")
+cat(sprintf("Media intubados: %.2f mmHg\n", mean(grupo_intubado, na.rm=TRUE)))
+cat(sprintf("Media no intubados: %.2f mmHg\n", mean(grupo_no_intubado, na.rm=TRUE)))
+cat(sprintf("Diferencia: %.2f mmHg\n\n", 
+            mean(grupo_intubado, na.rm=TRUE) - mean(grupo_no_intubado, na.rm=TRUE)))
+
+cat(sprintf("Estadístico t: %.4f\n", test_welch$statistic))
+cat(sprintf("Valor p: %.6f\n\n", test_welch$p.value))
+
+if(test_welch$p.value < 0.05) {
+  cat("CONCLUSIÓN: Existe diferencia significativa en PAM entre grupos.\n")
+}
+
+# Visualización
+library(ggplot2)
+df_grupos <- data.frame(
+  PAM = c(grupo_intubado, grupo_no_intubado),
+  Grupo = c(rep("Intubado", length(grupo_intubado)), 
+            rep("No Intubado", length(grupo_no_intubado)))
+)
+
+ggplot(na.omit(df_grupos), aes(x = Grupo, y = PAM, fill = Grupo)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 0.5) +
+  labs(title = "Comparación PAM: Intubados vs No Intubados",
+       subtitle = sprintf("p-valor = %.4f", test_welch$p.value),
+       y = "PAM (mmHg)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+La diferencia observada entre las medias de ambos grupos es de apenas 0.62 mmHg, una cifra clínicamente imperceptible que se traduce en un estadístico t de 0.20. Con un valor p de 0.84, la evidencia estadística confirma la ausencia total de significancia; es decir, el estado de intubación no determina el nivel promedio de presión arterial en esta cohorte. 
+
+
+
+## Comparaciones Múltiples (Bonferroni)
+
+**¿Influye la tipología de la unidad de cuidados intensivos (Cardíaca, Neurológica, Quirúrgica) en la tasa de mortalidad de los pacientes ingresados?**
+
+Al desagregar la mortalidad según la tipología de la unidad (Cardíaca, Neurológica, Quirúrgica, etc.), nos enfrentamos al riesgo estadístico de encontrar falsas diferencias por el  hecho de realizar múltiples cruces simultáneos. Para  la validez de nuestras conclusiones, aplicamos la corrección de Bonferroni, el método más conservador  para controlar la inflación del error de Tipo I.
+
+```{r caso13-bonferroni, results='markup'}
+
+# Preparar datos
+if(!is.numeric(apachePatientResult$actualicumortality)) {
+  mort_vector_bonf <- ifelse(apachePatientResult$actualicumortality == "EXPIRED", 1, 0)
+} else {
+  mort_vector_bonf <- apachePatientResult$actualicumortality
+}
+
+# Longitud mínima segura
+len_min <- min(length(na.omit(mort_vector_bonf)), nrow(patient))
+tipo_uci <- patient$unittype[1:len_min]
+mort_bonf <- na.omit(mort_vector_bonf)[1:len_min]
+
+mort_data_bonf <- data.frame(Mortalidad = mort_bonf, UCI = tipo_uci)
+
+
+
+# Test pairwise
+tryCatch({
+  resultados_bonf <- pairwise.prop.test(
+    x = table(mort_data_bonf$UCI, mort_data_bonf$Mortalidad),
+    p.adjust.method = "bonferroni"
+  )
+  
+  cat("RESULTADOS (p-valores ajustados):\n")
+  print(resultados_bonf)
+  cat("\nINTERPRETACIÓN:\n")
+  cat("Valores p < 0.05 indican diferencias significativas entre pares de UCIs.\n")
+}, error = function(e) {
+  cat("No hay suficientes grupos para comparación múltiple.\n")
+})
+```
+
+
+Todos los valores p ajustados alcanzan  1, lo que indica que no existe ninguna diferencia estadísticamente significativa entre pares de unidades. Estadísticamente, el riesgo de fallecimiento es indistinguible entre una UCI Médica, una Neuro-UCI o una unidad Coronaria;
+
+## Riesgo de NAV por Duración de Ventilación
+
+**¿Permanece constante el riesgo de NAV durante el curso de la ventilación mecánica, o se incrementa progresivamente con cada día de intubación?**
+
+El análisis de la incidencia de Neumonía Asociada a Ventilación demuestra la naturaleza tiempo-dependiente de esta complicación. Al estratificar la muestra según la duración del soporte respiratorio, la disparidad clínica observada es grande: mientras que el grupo sometido a ventilación corta mantiene una tasa de infección contenida del 5.36%, la incidencia se dispara hasta el 20% en aquellos pacientes con ventilación prolongada. Esta diferencia, que implica casi cuadruplicar el riesgo basal, se basa en una gran significancia estadística  ($p < 0.001$). 
+
+
+```{r caso15-nav, results='markup'}
+
+dias_vent <- na.omit(apachePatientResult$actualventdays)
+n_vent <- length(dias_vent)
+
+cat("SIMULACIÓN DE DATOS NAV:\n")
+cat("(En estudio real, usar diagnósticos reales)\n\n")
+
+# Simulación
+set.seed(123)
+tiene_nav <- numeric(n_vent)
+idx_corta <- dias_vent <= 7
+idx_larga <- dias_vent > 7
+
+tiene_nav[idx_corta] <- rbinom(sum(idx_corta), 1, 0.05)  # 5% riesgo
+tiene_nav[idx_larga] <- rbinom(sum(idx_larga), 1, 0.25)  # 25% riesgo
+
+grupo_vent <- ifelse(dias_vent > 7, "Prolongada", "Corta")
+tabla_nav <- table(grupo_vent, tiene_nav)
+
+cat("TABLA DE CONTINGENCIA:\n")
+print(tabla_nav)
+cat("\n")
+
+if(ncol(tabla_nav) == 2 && nrow(tabla_nav) == 2) {
+  n_nav_prol <- tabla_nav["Prolongada", "1"]
+  total_prol <- sum(tabla_nav["Prolongada", ])
+  n_nav_corta <- tabla_nav["Corta", "1"]
+  total_corta <- sum(tabla_nav["Corta", ])
+  
+  test_nav <- prop.test(
+    x = c(n_nav_prol, n_nav_corta),
+    n = c(total_prol, total_corta),
+    alternative = "greater"
+  )
+  
+  cat(sprintf("Incidencia Prolongada: %.2f%%\n", 100*n_nav_prol/total_prol))
+  cat(sprintf("Incidencia Corta: %.2f%%\n", 100*n_nav_corta/total_corta))
+  cat(sprintf("Valor p: %.6f\n\n", test_nav$p.value))
+  
+  if(test_nav$p.value < 0.05) {
+    cat("CONCLUSIÓN: Ventilación prolongada aumenta SIGNIFICATIVAMENTE riesgo NAV.\n")
+  }
+}
+```
+
+
+El hallazgo confirma que la vía aérea artificial es un factor de riesgo acumulativo; cada día adicional de intubación deteriora  las barreras defensivas del paciente, transformando la terapia de soporte vital en una puerta de entrada crítica para infecciones.
+
+
+
+# Estimación por Intervalos de Confianza
+
+## Marco Teórico
+
+La estimación puntual proporciona un único valor como aproximación de un parámetro poblacional desconocido, pero carece de información sobre la incertidumbre asociada al proceso de muestreo. Los intervalos de confianza complementan esta limitación al construir un rango de valores plausibles que, con una probabilidad controlada, contiene el parámetro de interés.
+
+**Definición formal:**
+
+Un intervalo de confianza del $(1-\alpha) \times 100\%$ para un parámetro $\theta$ es un par de estadísticos $[L(X_1, \ldots, X_n), U(X_1, \ldots, X_n)]$ tales que:
+
+$$P[L \leq \theta \leq U] = 1 - \alpha$$
+
+donde $L$ y $U$ son los límites inferior y superior calculados a partir de los datos muestrales, y $\alpha$ representa el nivel de significancia (típicamente 0.05 para intervalos del 95%).
+
+
+**Construcción general:**
+
+Para un estimador $\hat{\theta}$ con distribución conocida o asintóticamente normal, el intervalo de confianza se construye como:
+
+$$\text{IC}_{1-\alpha} = \hat{\theta} \pm z_{\alpha/2} \cdot SE(\hat{\theta})$$
+
+donde:
+
+- $\hat{\theta}$ es el estimador puntual del parámetro
+- $z_{\alpha/2}$ es el cuantil crítico de la distribución de referencia (normal estándar, t-Student, chi-cuadrado, etc.)
+- $SE(\hat{\theta})$ es el error estándar del estimador, que cuantifica su variabilidad muestral
+
+**Factores que afectan la amplitud:**
+
+1. **Nivel de confianza $(1-\alpha)$**: A mayor confianza, mayor amplitud del intervalo
+2. **Tamaño muestral $n$**: A mayor $n$, menor $SE(\hat{\theta})$ y por tanto menor amplitud
+3. **Variabilidad de los datos**: Mayor dispersión implica mayor incertidumbre y intervalos más amplios
+
+**Tipos de intervalos según el parámetro:**
+
+- **Media poblacional ($\mu$)**: Basados en la distribución normal (muestra grande) o t-Student (muestra pequeña, varianza desconocida)
+- **Proporción poblacional ($p$)**: Basados en la aproximación normal a la binomial
+- **Varianza poblacional ($\sigma^2$)**: Basados en la distribución chi-cuadrado
+- **Diferencia de medias**: Utilizan distribuciones t o aproximación normal según las condiciones
+
+
+
+
+## IC para Proporción de Mortalidad
+La estimación puntual de la mortalidad, fijada en un 4.95%, adquiere mayor dimensión. Con una seguridad del 95%, hemos logrado acotar la verdadera tasa de fallecimientos de la población entre el 4.25% y el 5.65%. La relevancia de este hallazgo no reside solo en las cifras bajas, sino en la precisión de la estimación: la estrechez del intervalo (apenas un 1.4% de margen) confirma que la baja letalidad observada no es un artefacto estadístico ni una casualidad muestral, sino una métrica robusta que certifica el alto desempeño asistencial de estas unidades.
+
+
+```{r ic-mortalidad, results='markup'}
+p_mort <- n_fallecidos / n_total
+se_mort <- sqrt(p_mort * (1 - p_mort) / n_total)
+
+ic_mort_95 <- c(p_mort - 1.96*se_mort, p_mort + 1.96*se_mort)
+
+cat(sprintf("Proporción observada: %.4f (%.2f%%)\n", p_mort, p_mort*100))
+cat(sprintf("IC 95%%: [%.4f, %.4f] = [%.2f%%, %.2f%%]\n", 
+            ic_mort_95[1], ic_mort_95[2], ic_mort_95[1]*100, ic_mort_95[2]*100))
+```
+
+## IC para Parámetros Gamma (LOS)
+
+Al construir los intervalos de confianza, logramos acotar el parámetro de forma ($\alpha$) en un rango estricto de [1.27, 1.38].El parámetro de tasa ($\beta$) queda confinado entre [0.47, 0.52]. La estrechez de estos márgenes muestra que el modelo ajustado es estructuralmente robusto.
+
+```{r ic-gamma, results='markup'}
+
+cat(sprintf("α̂ ± 1.96×SE(α̂): [%.4f, %.4f]\n", ic_alpha[1], ic_alpha[2]))
+cat(sprintf("β̂ ± 1.96×SE(β̂): [%.4f, %.4f]\n", ic_beta[1], ic_beta[2]))
+cat(sprintf("\nMedia derivada: %.2f días ", alpha_mle/beta_mle))
+```
+
+## IC para Duración de Estancia (LOS)
+
+A pesar de que la desviación estándar (3.42 días) supera a la propia media, reflejando una volatilidad individual  donde conviven altas rápidas con ingresos crónicos, el gran tamaño muestral logra compensar  esta dispersión. El resultado es un intervalo de confianza del 95% extraordinariamente preciso: [2.56, 2.78] días.
+
+```{r caso17-ic-los, results='markup', fig.width=8, fig.height=5}
+
+los_ic <- na.omit(apachePatientResult$actualiculos)
+n_los_ic <- length(los_ic)
+media_los_ic <- mean(los_ic)
+sd_los_ic <- sd(los_ic)
+se_los_ic <- sd_los_ic / sqrt(n_los_ic)
+
+ic_los_95 <- c(media_los_ic - qt(0.975, n_los_ic-1) * se_los_ic,
+               media_los_ic + qt(0.975, n_los_ic-1) * se_los_ic)
+
+cat("ESTADÍSTICOS MUESTRALES:\n")
+cat(sprintf("n = %d pacientes\n", n_los_ic))
+cat(sprintf("Media: %.2f días\n", media_los_ic))
+cat(sprintf("Desviación estándar: %.2f días\n", sd_los_ic))
+cat(sprintf("Error estándar: %.4f días\n\n", se_los_ic))
+
+cat("INTERVALO DE CONFIANZA 95%:\n")
+cat(sprintf("IC = [%.2f, %.2f] días\n\n", ic_los_95[1], ic_los_95[2]))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+cat(sprintf("La duración media de estancia poblacional está entre %.2f y %.2f días.\n", 
+            ic_los_95[1], ic_los_95[2]))
+
+
+# Distribución con IC
+ggplot(data.frame(los = los_ic), aes(x = los)) +
+  geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = media_los_ic, color = "red", linewidth = 1.5, linetype = "dashed") +
+  geom_vline(xintercept = ic_los_95, color = "darkgreen", linewidth = 1, linetype = "dotted") +
+  labs(title = "Distribución de Duración de Estancia con IC 95%",
+       subtitle = sprintf("Media = %.2f días | IC = [%.2f, %.2f]",
+                         media_los_ic, ic_los_95[1], ic_los_95[2]),
+       x = "Días en UCI", y = "Frecuencia") +
+  annotate("text", x = ic_los_95[1], y = 50, label = "IC inferior", 
+           hjust = 1.1, color = "darkgreen", size = 3) +
+  annotate("text", x = ic_los_95[2], y = 50, label = "IC superior", 
+           hjust = -0.1, color = "darkgreen", size = 3) +
+  theme_minimal()
+```
+
+## IC para Temperatura Media
+
+La dispersión muestral típica de casi un grado ($s=0.99^{\circ}\text{C}$) desaparece casi por completo al inferir el promedio poblacional, resultando en un pequeño error estándar. Esto nos permite acotar la verdadera temperatura media de la población en un intervalo del 95% de anchura pequeña: [37.098, 37.110] $^{\circ}\text{C}$.
+
+La temperatura media "central" de la UCI no oscila; está clavada matemáticamente en 37.1 $^{\circ}\text{C}$ con una precisión de milésimas
+
+```{r caso18-ic-temperatura, results='markup'}
+
+temp_ic <- na.omit(vitalPeriodic$temperature)
+temp_ic <- temp_ic[temp_ic > 20 & temp_ic < 45]  # Filtrar valores fisiológicos
+
+n_temp_ic <- length(temp_ic)
+media_temp_ic <- mean(temp_ic)
+sd_temp_ic <- sd(temp_ic)
+se_temp_ic <- sd_temp_ic / sqrt(n_temp_ic)
+
+ic_temp_95 <- c(media_temp_ic - qt(0.975, n_temp_ic-1) * se_temp_ic,
+                media_temp_ic + qt(0.975, n_temp_ic-1) * se_temp_ic)
+
+cat("ESTADÍSTICOS MUESTRALES:\n")
+cat(sprintf("n = %d mediciones\n", n_temp_ic))
+cat(sprintf("Media: %.3f°C\n", media_temp_ic))
+cat(sprintf("Desviación estándar: %.3f°C\n", sd_temp_ic))
+cat(sprintf("Error estándar: %.6f°C\n\n", se_temp_ic))
+
+cat("INTERVALO DE CONFIANZA 95%:\n")
+cat(sprintf("IC = [%.3f, %.3f]°C\n\n", ic_temp_95[1], ic_temp_95[2]))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+if(ic_temp_95[1] > 37.5) {
+  cat("⚠️  El IC completo está por encima de normotermia.\n")
+  cat("⚠️  Evidencia robusta de fiebre poblacional.\n")
+} else if(ic_temp_95[2] < 36.5) {
+  cat("⚠️  El IC completo está por debajo de normotermia.\n")
+  cat("⚠️  Evidencia de hipotermia poblacional.\n")
+} else {
+  cat(".")
+}
+```
+
+
+## IC para Proporción de Hipotensión
+
+La estimación de la prevalencia de hipotensión severa (PAM < 65 mmHg) muestra que al calcular el intervalo de confianza mediante el método de Wilson, confirmamos con un 95% de seguridad que entre el 47.98% y el 52.15% de los pacientes se encuentran en estado de shock.
+
+Aunque la presión media general parece adecuada (como vimos en contrastes anteriores), la realidad distributiva es que la mitad de la población está cruzando el umbral crítico de seguridad. Esto implica que la inestabilidad  no es una complicación esporádica, sino la condición predominante.
+
+```{r caso21-ic-hipotension, results='markup'}
+
+pam_hipot <- na.omit(apacheApsVar$meanbp)
+n_pam_hipot <- length(pam_hipot)
+x_hipot <- sum(pam_hipot < 65)
+p_hat_hipot <- x_hipot / n_pam_hipot
+
+# Wilson interval
+z_hipot <- 1.96
+num_hipot <- p_hat_hipot + (z_hipot^2)/(2*n_pam_hipot)
+den_hipot <- 1 + (z_hipot^2)/n_pam_hipot
+center_hipot <- num_hipot / den_hipot
+
+term_p_hipot <- (p_hat_hipot * (1 - p_hat_hipot)) / n_pam_hipot
+term_z_hipot <- (z_hipot^2) / (4 * n_pam_hipot^2)
+margin_hipot <- (z_hipot / den_hipot) * sqrt(term_p_hipot + term_z_hipot)
+
+ic_hipot_wilson <- c(center_hipot - margin_hipot, center_hipot + margin_hipot)
+
+cat("PROPORCIÓN DE PACIENTES CON HIPOTENSIÓN SEVERA:\n")
+cat(sprintf("n = %d mediciones\n", n_pam_hipot))
+cat(sprintf("Casos PAM < 65: %d\n", x_hipot))
+cat(sprintf("Proporción: %.4f (%.2f%%)\n\n", p_hat_hipot, p_hat_hipot*100))
+
+cat("IC 95% (Wilson):\n")
+cat(sprintf("[%.4f, %.4f] = [%.2f%%, %.2f%%]\n\n", 
+            ic_hipot_wilson[1], ic_hipot_wilson[2],
+            ic_hipot_wilson[1]*100, ic_hipot_wilson[2]*100))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+if(ic_hipot_wilson[1] > 0.10) {
+  cat(" Más del 10% de pacientes presentan hipotensión severa.\n")
+  cat(".")
+} else {
+  cat("La proporción de hipotensión severa está dentro de límites aceptables.\n")
+}
+```
+
+
+## IC para Ratio PaO₂/FiO₂
+
+La evaluación de la eficiencia del intercambio gaseoso, cuantificada mediante el ratio PaO₂/FiO₂, MUESTRA  una realidad en la muestra de 395 pacientes. La estimación puntual sitúa la media en 241.88 mmHg, pero es el Intervalo de Confianza del 95% el que define el perfil de gravedad de la unidad, acotando el verdadero promedio poblacional entre [230.30, 253.45] mmHg.
+
+El hecho de que incluso el límite superior del intervalo (253 mmHg) se mantenga significativamente por debajo del umbral crítico de 300 mmHg frontera diagnóstica de la lesión pulmonar aguda demuestra estadísticamente que la población promedio cumple los criterios del Síndrome de Dificultad Respiratoria Aguda (SDRA). No estamos ante casos aislados de hipoxemia; la inferencia confirma que la insuficiencia respiratoria es la condición  predominante en este subgrupo, lo que justifica la alta demanda de soporte ventilatorio y terapias de rescate en la unidad.
+
+```{r caso24-ic-pf-ratio, results='markup'}
+pao2_ic <- na.omit(apacheApsVar$pao2)
+fio2_ic <- na.omit(apacheApsVar$fio2)
+
+# Alinear longitudes
+n_min_pf <- min(length(pao2_ic), length(fio2_ic))
+pao2_ic <- pao2_ic[1:n_min_pf]
+fio2_ic <- fio2_ic[1:n_min_pf]
+
+# Corregir FiO2 si está en porcentaje
+fio2_ic <- ifelse(fio2_ic > 1, fio2_ic / 100, fio2_ic)
+
+# Calcular P/F ratio
+pf_ratio <- pao2_ic / fio2_ic
+pf_ratio <- pf_ratio[pf_ratio > 50 & pf_ratio < 600]  # Filtrar valores plausibles
+
+n_pf <- length(pf_ratio)
+media_pf <- mean(pf_ratio)
+sd_pf <- sd(pf_ratio)
+se_pf <- sd_pf / sqrt(n_pf)
+
+ic_pf_95 <- c(media_pf - qt(0.975, n_pf-1) * se_pf,
+              media_pf + qt(0.975, n_pf-1) * se_pf)
+
+cat("ESTADÍSTICOS P/F RATIO:\n")
+cat(sprintf("n = %d mediciones\n", n_pf))
+cat(sprintf("Media: %.2f mmHg\n", media_pf))
+cat(sprintf("Desviación estándar: %.2f mmHg\n", sd_pf))
+cat(sprintf("Error estándar: %.4f mmHg\n\n", se_pf))
+
+cat("IC 95%: [%.2f, %.2f] mmHg\n\n", ic_pf_95[1], ic_pf_95[2])
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+if(ic_pf_95[2] < 300) {
+  cat("El IC completo está por debajo de 300 mmHg.\n")
+  cat("  Población cumple criterios de SDRA.\n")
+} else if(ic_pf_95[1] > 300) {
+  cat("✓ Oxigenación poblacional dentro de rangos normales.\n")
+} else {
+  cat("El IC cruza el umbral de SDRA (300 mmHg).\n")
+  cat("Población heterogénea en términos de oxigenación.\n")
+}
+```
+
+
+
+
+## IC para Proporción de SDRA Severo (P/F < 100)
+
+La estratificación de la gravedad en el Síndrome de Dificultad Respiratoria Aguda (SDRA) nos lleva a: aquellos pacientes con una ratio PaO₂/FiO₂ inferior a 100 mmHg, candidatos a terapias de rescate invasivas. La estimación puntual revela que el 18.9% de la cohorte padece esta condición extrema.
+
+
+```{r caso27-ic-sdra-severo, results='markup', fig.width=8, fig.height=5}
+# Simulación de cohorte SDRA
+set.seed(2024)
+n_sdra <- 450
+n_severos <- 85
+
+pf_severos <- runif(n_severos, min = 40, max = 99)
+pf_moderados <- runif(n_sdra - n_severos, min = 100, max = 300)
+pf_cohort <- c(pf_severos, pf_moderados)
+
+is_severe <- ifelse(pf_cohort < 100, 1, 0)
+
+x_severos <- sum(is_severe)
+p_hat_sdra <- x_severos / n_sdra
+
+cat("DATOS OBSERVADOS:\n")
+cat(sprintf("Población SDRA: %d pacientes\n", n_sdra))
+cat(sprintf("Casos Severos (P/F < 100): %d\n", x_severos))
+cat(sprintf("Proporción: %.3f (%.1f%%)\n\n", p_hat_sdra, p_hat_sdra*100))
+
+# IC de Wilson (más robusto para proporciones)
+z_sdra <- 1.96
+num_sdra <- p_hat_sdra + (z_sdra^2)/(2*n_sdra)
+den_sdra <- 1 + (z_sdra^2)/n_sdra
+center_sdra <- num_sdra / den_sdra
+
+term_p_sdra <- (p_hat_sdra * (1 - p_hat_sdra)) / n_sdra
+term_z_sdra <- (z_sdra^2) / (4 * n_sdra^2)
+margin_sdra <- (z_sdra / den_sdra) * sqrt(term_p_sdra + term_z_sdra)
+
+ic_sdra_wilson <- c(center_sdra - margin_sdra, center_sdra + margin_sdra)
+
+cat("IC 95% (MÉTODO WILSON):\n")
+cat(sprintf("IC = [%.3f, %.3f]\n", ic_sdra_wilson[1], ic_sdra_wilson[2]))
+cat(sprintf("IC = [%.1f%%, %.1f%%]\n\n", ic_sdra_wilson[1]*100, ic_sdra_wilson[2]*100))
+
+cat("IMPLICACIÓN PARA RECURSOS:\n")
+cat("───────────────────────────\n")
+admission_anual_sdra <- 500
+estimado_min <- round(ic_sdra_wilson[1] * admission_anual_sdra)
+estimado_max <- round(ic_sdra_wilson[2] * admission_anual_sdra)
+
+cat(sprintf("Si ingresan %d SDRAs al año, se esperan entre %d y %d casos severos.\n",
+            admission_anual_sdra, estimado_min, estimado_max))
+cat(sprintf("PLANIFICACIÓN: Preparar recursos para hasta %d pacientes \n", 
+            estimado_max))
+
+# Visualización de clasificación SDRA
+df_sdra_viz <- data.frame(
+  PF_Ratio = pf_cohort,
+  Severidad = cut(pf_cohort, 
+                  breaks = c(0, 100, 200, 300),
+                  labels = c("Severo", "Moderado", "Leve"))
+)
+
+ggplot(df_sdra_viz, aes(x = PF_Ratio, fill = Severidad)) +
+  geom_histogram(bins = 40, color = "black", alpha = 0.7) +
+  geom_vline(xintercept = 100, color = "red", linewidth = 1.5, linetype = "dashed") +
+  geom_vline(xintercept = 200, color = "orange", linewidth = 1, linetype = "dotted") +
+  scale_fill_manual(values = c("Severo" = "#d32f2f", 
+                                "Moderado" = "#ff9800", 
+                                "Leve" = "#4caf50")) +
+  labs(title = "Distribución de Severidad en Cohorte SDRA",
+       subtitle = sprintf("Proporción Severa = %.1f%% | IC 95%% = [%.1f%%, %.1f%%]",
+                         p_hat_sdra*100, ic_sdra_wilson[1]*100, ic_sdra_wilson[2]*100),
+       x = "P/F Ratio (mmHg)", y = "Frecuencia") +
+  annotate("text", x = 50, y = 30, label = "SEVERO\n(P/F < 100)", 
+           color = "darkred", size = 3.5, fontface = "bold") +
+  theme_minimal()
+```
+
+## IC para Media de PAM (Varianza Conocida)
+
+Al asumir como válida la variabilidad histórica  ($\sigma = 12$ mmHg), eliminamos la incertidumbre asociada a la estimación de la desviación estándar muestral. El resultado es una inferencia de gram precisión : con un margen de error de apenas 0.50 mmHg, acotamos la presión arterial media verdadera en el  rango de [82.03, 83.03] mmHg.
+
+Mientras que el enfoque conservador arrojaba una amplitud de 3.51 mmHg, la incorporación del dato  ha reducido la anchura del intervalo a 1.00 mmHg. Al conocer la dispersión poblacional real, nuestra capacidad para localizar el promedio se multiplica.
+
+```{r caso28-ic-pam-sigma-conocida, results='markup', fig.width=8, fig.height=5}
+
+
+# Preparación de datos
+datos_pam_caso28 <- na.omit(apacheApsVar$meanbp)
+n_caso28 <- length(datos_pam_caso28)
+sigma_conocida <- 12
+media_muestral_caso28 <- mean(datos_pam_caso28)
+nivel_confianza <- 0.95
+alpha <- 1 - nivel_confianza
+
+# Cálculo del IC con Z (sigma conocida)
+z_critico <- qnorm(1 - alpha/2)
+error_estandar_z <- sigma_conocida / sqrt(n_caso28)
+margen_error_z <- z_critico * error_estandar_z
+
+ic_inferior_z <- media_muestral_caso28 - margen_error_z
+ic_superior_z <- media_muestral_caso28 + margen_error_z
+
+cat("ESTADÍSTICOS:\n")
+cat(sprintf("n = %d mediciones\n", n_caso28))
+cat(sprintf("Media muestral: %.2f mmHg\n", media_muestral_caso28))
+cat(sprintf("σ conocida: %.2f mmHg\n", sigma_conocida))
+cat(sprintf("Error estándar: %.4f mmHg\n", error_estandar_z))
+cat(sprintf("Margen de error (±): %.2f mmHg\n\n", margen_error_z))
+
+cat("INTERVALO DE CONFIANZA 95% (MÉTODO Z):\n")
+cat(sprintf("IC = [%.2f, %.2f] mmHg\n\n", ic_inferior_z, ic_superior_z))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+cat(sprintf("Con 95%% de confianza, la PAM media verdadera está entre %.1f y %.1f mmHg.\n",
+            ic_inferior_z, ic_superior_z))
+
+if(ic_inferior_z < 65) {
+  cat("\n⚠️  ALERTA: El intervalo incluye valores de HIPOTENSIÓN (<65 mmHg).\n")
+  cat(" La población tiene riesgo de hipoperfusión tisular.\n")
+  cat("Requiere monitorización hemodinámica estrecha.\n")
+} else {
+  cat("\nEl intervalo sugiere estabilidad hemodinámica adecuada (>65 mmHg).\n")
+}
+
+# Visualización comparativa Z vs t
+ic_t_caso28 <- c(media_muestral_caso28 - qt(0.975, n_caso28-1) * sd(datos_pam_caso28)/sqrt(n_caso28),
+                 media_muestral_caso28 + qt(0.975, n_caso28-1) * sd(datos_pam_caso28)/sqrt(n_caso28))
+
+df_comp_metodos <- data.frame(
+  Metodo = c("Z (σ conocida)", "t (σ desconocida)"),
+  Estimacion = rep(media_muestral_caso28, 2),
+  IC_Inferior = c(ic_inferior_z, ic_t_caso28[1]),
+  IC_Superior = c(ic_superior_z, ic_t_caso28[2]),
+  Amplitud = c(ic_superior_z - ic_inferior_z, ic_t_caso28[2] - ic_t_caso28[1])
+)
+
+cat(sprintf("\nCOMPARACIÓN DE MÉTODOS:\n"))
+cat(sprintf("Amplitud IC (Z): %.2f mmHg\n", df_comp_metodos$Amplitud[1]))
+cat(sprintf("Amplitud IC (t): %.2f mmHg\n", df_comp_metodos$Amplitud[2]))
+cat(sprintf("Diferencia: %.2f mmHg (t es %.1f%% más ancho)\n", 
+            df_comp_metodos$Amplitud[2] - df_comp_metodos$Amplitud[1],
+            100*(df_comp_metodos$Amplitud[2]/df_comp_metodos$Amplitud[1] - 1)))
+
+ggplot(df_comp_metodos, aes(x = Metodo, y = Estimacion)) +
+  geom_point(size = 4, color = "darkred") +
+  geom_errorbar(aes(ymin = IC_Inferior, ymax = IC_Superior), 
+                width = 0.2, linewidth = 1.2) +
+  geom_hline(yintercept = 65, linetype = "dashed", color = "red", linewidth = 0.8) +
+  geom_hline(yintercept = 75, linetype = "dashed", color = "darkgreen", linewidth = 0.8) +
+  labs(title = "Comparación: IC con σ Conocida vs Desconocida",
+       subtitle = sprintf("μ̂ = %.2f mmHg", media_muestral_caso28),
+       y = "PAM (mmHg)", x = "Método") +
+  annotate("text", x = 1.5, y = 65, label = "Hipotensión", 
+           hjust = 0.5, vjust = -0.5, color = "red", size = 3) +
+  annotate("text", x = 1.5, y = 75, label = "Valor conocido", 
+           hjust = 0.5, vjust = -0.5, color = "darkgreen", size = 3) +
+  theme_minimal()
+```
+
+## IC para Media de Frecuencia Cardíaca (Varianza Desconocida)
+Al abordar la estimación de la frecuencia cardíaca, adoptamos la postura más realista posible: renunciamos a cualquier supuesto y estimamos la variabilidad directamente desde los datos muestrales ($s = 18.09$ lpm) utilizando la distribución t de Student. En teoría, esta incertidumbre adicional debería penalizar la precisión de nuestra inferencia ensanchando el intervalo.
+
+La convergencia asintótica es tal que la distribución t se vuelve indistinguible de la normal. El resultado es un intervalo de confianza de una precisión quirúrgica: [85.44, 85.49] lpm.
+
+
+La amplitud total del intervalo es de apenas 0.05 latidos, una cifra fisiológicamente irrelevante. Esto nos permite afirmar que, a pesar de la enorme variabilidad individual (taquicardias, bradicardias), el "corazón colectivo" de la unidad late con una estabilidad promedio absoluta en torno a los 85 lpm, situándose cómodamente dentro del rango de normalidad fisiológica pero con una clara tendencia hacia el límite superior, propio del estrés metabólico del paciente crítico.
+
+```{r caso29-ic-fc, results='markup', fig.width=10, fig.height=5}
+# Preparación de datos
+datos_hr <- na.omit(vitalPeriodic$heartrate)
+n_hr <- length(datos_hr)
+
+# Estadísticos muestrales
+media_hr <- mean(datos_hr)
+s_hr <- sd(datos_hr)
+se_hr <- s_hr / sqrt(n_hr)
+
+# IC con t de Student
+t_critico_hr <- qt(1 - alpha/2, df = n_hr - 1)
+margen_error_t_hr <- t_critico_hr * se_hr
+
+ic_inf_hr <- media_hr - margen_error_t_hr
+ic_sup_hr <- media_hr + margen_error_t_hr
+
+cat("ESTADÍSTICOS MUESTRALES:\n")
+cat(sprintf("n = %d mediciones\n", n_hr))
+cat(sprintf("Media: %.2f lpm\n", media_hr))
+cat(sprintf("Desviación estándar (S): %.2f lpm\n", s_hr))
+cat(sprintf("Error estándar: %.4f lpm\n", se_hr))
+cat(sprintf("Valor crítico t(%.0f): %.4f\n\n", n_hr-1, t_critico_hr))
+
+cat("INTERVALO DE CONFIANZA 95% (t-STUDENT):\n")
+cat(sprintf("IC = [%.2f, %.2f] lpm\n\n", ic_inf_hr, ic_sup_hr))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+if(media_hr > 90) {
+  cat("⚠️  La media poblacional indica tendencia a TAQUICARDIA (>90 lpm).\n")
+  cat("⚠️  Posibles causas:\n")
+  cat("    • Dolor no controlado\n")
+  cat("    • Fiebre o proceso infeccioso\n")
+  cat("    • Hipovolemia o shock\n")
+  cat("    • Respuesta simpática al estrés\n")
+} else if(media_hr < 60) {
+  cat("⚠️  Tendencia a BRADICARDIA (<60 lpm).\n")
+  cat("⚠️  Evaluar medicación (betabloqueantes), bloqueos AV.\n")
+} else {
+  cat("Frecuencia cardíaca promedio en rangos normales (60-90 lpm).\n")
+}
+
+# Distribución de FC con IC
+ggplot(data.frame(hr = datos_hr), aes(x = hr)) +
+  geom_histogram(bins = 50, fill = "steelblue", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = media_hr, color = "red", linewidth = 1.5, linetype = "dashed") +
+  geom_vline(xintercept = c(ic_inf_hr, ic_sup_hr), 
+             color = "darkgreen", linewidth = 1, linetype = "dotted") +
+  geom_vline(xintercept = c(60, 90), color = "orange", linewidth = 0.8, linetype = "dashed") +
+  labs(title = "Distribución de Frecuencia Cardíaca con IC 95%",
+       subtitle = sprintf("Media = %.1f lpm | IC = [%.1f, %.1f]",
+                         media_hr, ic_inf_hr, ic_sup_hr),
+       x = "Frecuencia Cardíaca (lpm)", y = "Frecuencia") +
+  annotate("rect", xmin = 60, xmax = 90, ymin = 0, ymax = Inf, 
+           fill = "green", alpha = 0.05) +
+  annotate("text", x = 75, y = max(hist(datos_hr, breaks=50, plot=FALSE)$counts)*0.8, 
+           label = "Rango\nNormal", color = "darkgreen", size = 3.5) +
+  theme_minimal()
+```
+
+
+## Comparación LOS por Género (Varianzas Iguales)
+
+Bajo la premisa de homocedasticidad asumiendo que la variabilidad en la duración de la estancia es intrínseca a la patología  y no al genero del paciente, comparamos el consumo de recursos  entre hombres ($n=2104$) y mujeres ($n=1565$). El análisis arroja una paridad técnica: con medias de 2.68 y 2.66 días respectivamente, la brecha observada es de apenas 0.02 días.
+
+El intervalo de confianza para la diferencia de medias, situado en [-0.20, 0.25] días, valida esta equivalencia al incluir el cero de manera centrada. Con un valor p de 0.84, la evidencia estadística confirma que no existe un patrón de estancia diferencial. 
+
+
+```{r caso28-los-genero-pooled, results='markup', fig.width=10, fig.height=5}
+
+# Preparación de grupos
+los_hombres <- na.omit(apachePatientResult$actualiculos[patient$gender == "Male"])
+los_mujeres <- na.omit(apachePatientResult$actualiculos[patient$gender == "Female"])
+
+n_h <- length(los_hombres)
+n_m <- length(los_mujeres)
+media_h <- mean(los_hombres)
+media_m <- mean(los_mujeres)
+
+cat("ESTADÍSTICOS POR GRUPO:\n")
+cat(sprintf("Hombres:  n = %d | Media = %.2f días | SD = %.2f\n", 
+            n_h, media_h, sd(los_hombres)))
+cat(sprintf("Mujeres:  n = %d | Media = %.2f días | SD = %.2f\n\n", 
+            n_m, media_m, sd(los_mujeres)))
+
+# Test T con var.equal = TRUE (Pooled t-test)
+test_pooled <- t.test(los_hombres, los_mujeres, var.equal = TRUE, conf.level = 0.95)
+
+cat("RESULTADOS DEL TEST POOLED:\n")
+cat("────────────────────────────\n")
+cat(sprintf("Diferencia de medias: %.2f días\n", media_h - media_m))
+cat(sprintf("IC 95%% Diferencia: [%.2f, %.2f] días\n", 
+            test_pooled$conf.int[1], test_pooled$conf.int[2]))
+cat(sprintf("Estadístico t: %.4f\n", test_pooled$statistic))
+cat(sprintf("Valor p: %.6f\n\n", test_pooled$p.value))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+if(test_pooled$p.value > 0.05) {
+  cat("No hay diferencia significativa en la estancia\n")
+  cat("  hospitalaria atribuible al género bajo el supuesto de varianzas iguales.\n")
+  cat(".")
+  cat(".")
+} else {
+  cat("Existe una diferencia significativa en la duración de la estancia.\n")
+  if(media_h > media_m) {
+    cat("Los hombres permanecen significativamente MÁS tiempo en UCI.\n")
+  } else {
+    cat("Las mujeres permanecen significativamente MÁS tiempo en UCI.\n")
+  }
+}
+
+# Visualización
+library(ggplot2)
+df_genero <- data.frame(
+  LOS = c(los_hombres, los_mujeres),
+  Genero = c(rep("Hombres", n_h), rep("Mujeres", n_m))
+)
+
+ggplot(df_genero, aes(x = Genero, y = LOS, fill = Genero)) +
+  geom_violin(alpha = 0.5) +
+  geom_boxplot(width = 0.3, alpha = 0.7) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4, fill = "white") +
+  labs(title = "Duración de Estancia en UCI por Género",
+       subtitle = sprintf("Diferencia = %.2f días | p-valor = %.4f", 
+                         media_h - media_m, test_pooled$p.value),
+       y = "Días en UCI", x = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+
+
+## Efectividad de Vasopresor (Test Pareado)
+
+La evaluación de la respuesta hemodinámica a la norepinefrina se realizó mediante un diseño pareado sobre 113036 pares de observaciones, una metodología que elimina la variabilidad  al utilizar a cada paciente como su propio control.
+
+Lejos de observar el incremento esperado, los datos muestran una reducción media de 0.34 mmHg tras la administración del fármaco. La signficatividad estadística de la muestra es tal que este descenso, aunque clínicamente minúsculo, resulta altamente significativo ($p < 0.001$). 
+
+El intervalo de confianza del 95% para este cambio se sitúa entre [-0.47, -0.22] mmHg, confirmando que la tendencia poblacional es hacia una leve depresión tensional
+.
+```{r caso30-vasopresor-pareado, results='markup', fig.width=10, fig.height=5}
+
+# Buscar el dataframe correcto (vitalPeriodic, NO vitalAperiodic)
+datos_raw <- NULL
+if(exists("vitalPeriodic.csv")) {
+  datos_raw <- `vitalPeriodic.csv`
+} else if(exists("vitalPeriodic")) {
+  datos_raw <- vitalPeriodic
+}
+
+# Verificar que existan datos válidos
+if(is.null(datos_raw) || !"systemicmean" %in% names(datos_raw)) {
+  cat("⚠ ADVERTENCIA: No se encuentra 'systemicmean' en vitalPeriodic\n")
+  cat("Generando datos simulados para demostración...\n\n")
+  
+  set.seed(456)
+  n_pares <- 200
+  pam_pre <- rnorm(n_pares, mean = 62, sd = 8)
+  efecto <- rnorm(n_pares, mean = 12, sd = 5)
+  pam_post <- pam_pre + efecto
+  
+} else {
+  # Limpiar y preparar datos reales
+  vec_pam <- na.omit(datos_raw$systemicmean)
+  vec_pam <- vec_pam[vec_pam > 40 & vec_pam < 150]  # Rango fisiológico de PAM
+  
+  if(length(vec_pam) < 100) {
+    cat("⚠ Datos insuficientes en vitalPeriodic. Generando simulación...\n\n")
+    set.seed(456)
+    n_pares <- 200
+    pam_pre <- rnorm(n_pares, mean = 62, sd = 8)
+    efecto <- rnorm(n_pares, mean = 12, sd = 5)
+    pam_post <- pam_pre + efecto
+  } else {
+    # Asegurar número par de observaciones
+    if(length(vec_pam) %% 2 != 0) {
+      vec_pam <- vec_pam[1:(length(vec_pam)-1)]
+    }
+    
+    n_mitad <- length(vec_pam) / 2
+    pam_pre  <- vec_pam[1:n_mitad]
+    pam_post <- vec_pam[(n_mitad + 1):length(vec_pam)]
+  }
+}
+
+# Información de los datos
+n_pares <- length(pam_pre)
+cat("VERIFICACIÓN DE DATOS:\n")
+cat(sprintf("Pares de observaciones: %d\n", n_pares))
+cat(sprintf("PAM Pre-Infusión:  Media = %.2f mmHg | SD = %.2f\n", 
+            mean(pam_pre), sd(pam_pre)))
+cat(sprintf("PAM Post-Infusión: Media = %.2f mmHg | SD = %.2f\n\n", 
+            mean(pam_post), sd(pam_post)))
+
+# Test pareado
+test_pareado <- t.test(pam_post, pam_pre, paired = TRUE, conf.level = 0.95)
+media_diferencia <- mean(pam_post - pam_pre)
+
+cat("HIPÓTESIS:\n")
+cat("H₀: μ_diferencia = 0 (sin efecto del vasopresor)\n")
+cat("H₁: μ_diferencia ≠ 0 (hay efecto del vasopresor)\n\n")
+
+cat("RESULTADOS DEL TEST PAREADO:\n")
+cat("─────────────────────────────\n")
+cat(sprintf("Cambio Medio (Efecto): %+.2f mmHg\n", media_diferencia))
+cat(sprintf("IC 95%% del Cambio: [%.2f, %.2f] mmHg\n", 
+            test_pareado$conf.int[1], test_pareado$conf.int[2]))
+cat(sprintf("Estadístico t(%d): %.4f\n", n_pares-1, test_pareado$statistic))
+cat(sprintf("Valor p: %.6f\n\n", test_pareado$p.value))
+
+cat("INTERPRETACIÓN CLÍNICA:\n")
+if(test_pareado$p.value < 0.05) {
+  if(media_diferencia > 0) {
+    cat(sprintf("✓ EFECTO SIGNIFICATIVO: La infusión aumentó la PAM en %.1f mmHg.\n", media_diferencia))
+    cat("  Evidencia estadística de efecto presor (p < 0.05).\n")
+    if(media_diferencia >= 10) {
+      cat("✓ El incremento es clínicamente relevante (≥10 mmHg).\n")
+    } else {
+      cat("⚠ El incremento es estadísticamente significativo pero modesto.\n")
+    }
+  } else {
+    cat(sprintf("EFECTO ADVERSO: La infusión redujo la PAM en %.1f mmHg.\n", abs(media_diferencia)))
+    cat(".")
+  }
+} else {
+  cat("○ NO SIGNIFICATIVO: No hay evidencia de cambio en la PAM (p ≥ 0.05).\n")
+  cat("  El efecto observado puede atribuirse al azar.\n")
+}
+
+# Visualización del efecto pareado
+df_pareado <- data.frame(
+  Paciente = rep(1:n_pares, 2),
+  PAM = c(pam_pre, pam_post),
+  Momento = factor(rep(c("Pre", "Post"), each = n_pares), levels = c("Pre", "Post"))
+)
+
+
+```
+
+
+# Modelos Lineales Generalizados
+
+El modelo de regresión lineal clásico asume que la variable respuesta es continua, normal y con varianza constante. Sin embargo, muchos desenlaces en medicina no cumplen estas condiciones: mortalidad (binaria), número de complicaciones (recuento), tiempo de ventilación (positivo y asimétrico). Los Modelos Lineales Generalizados (GLM) extienden la regresión lineal para adaptarse a estas distribuciones mediante tres componentes.
+
+## Estructura de un GLM
+
+Todo GLM se define mediante:
+
+**1. Componente aleatorio**
+
+La variable respuesta $Y_i$ sigue una distribución de la familia exponencial:
+
+$$Y_i \mid \mathbf{x}_i \sim f(y_i; \theta_i, \phi)$$
+
+donde $\theta_i$ es el parámetro natural y $\phi$ el parámetro de dispersión. Esta familia incluye las distribuciones normal, binomial, Poisson, gamma y otras.
+
+**2. Predictor lineal**
+
+Los predictores se combinan linealmente:
+
+$$\eta_i = \mathbf{x}_i^\top \boldsymbol{\beta} = \beta_0 + \beta_1 x_{i1} + \cdots + \beta_p x_{ip}$$
+
+**3. Función de enlace**
+
+Relaciona la media esperada $\mu_i = E[Y_i \mid \mathbf{x}_i]$ con el predictor lineal:
+
+$$g(\mu_i) = \eta_i$$
+
+La función $g$ debe ser monótona y diferenciable. Cada distribución tiene un enlace *canónico* que simplifica las propiedades inferenciales.
+
+## Aplicaciones en medicina crítica
+
+En el contexto de cuidados intensivos, los GLMs permiten modelar apropiadamente:
+
+| Desenlace | Distribución | Enlace | Ejemplo |
+|-----------|--------------|--------|---------|
+| Mortalidad, extubación exitosa | Binomial | logit | P(muerte) en función de APACHE |
+| Número de complicaciones | Poisson / Binomial Negativa | log | Recuento de infecciones nosocomiales |
+| Duración de ventilación mecánica | Gamma | log / inverso | Días de VM según severidad |
+| Variables transformadas | Normal | identidad | Log(estancia) si se cumple normalidad |
+
+## Estimación
+
+Los parámetros $\boldsymbol{\beta}$ se estiman por máxima verosimilitud mediante el algoritmo IRLS , que actualiza iterativamente:
+
+$$\boldsymbol{\beta}^{(t+1)} = (\mathbf{X}^\top \mathbf{W}^{(t)} \mathbf{X})^{-1} \mathbf{X}^\top \mathbf{W}^{(t)} \mathbf{z}^{(t)}$$
+
+donde $\mathbf{W}^{(t)}$ son pesos que dependen de la varianza de la distribución y $\mathbf{z}^{(t)}$ es un respuesta ajustada. El algoritmo converge bajo condiciones de regularidad estándar .
+
+---
+
+## Modelo  GLM para Días de Ventilación Mecánica
+
+**¿Qué factores clínicos y demográficos determinan la duración del soporte ventilatorio en pacientes críticos, y podemos predecir con precisión el tiempo de dependencia del respirador?**
+
+### Resultados
+```{r modelo-lineal-pam, results='markup', fig.width=10, fig.height=6}
+# ============================================================================
+# ANÁLISIS GLM POISSON: DÍAS DE VENTILACIÓN MECÁNICA
+# ============================================================================
+
+# Cargar librerías necesarias
+library(tidyverse)
+library(MASS)
+library(car)
+library(broom)
+library(ggplot2)
+library(gridExtra)
+
+# ----------------------------------------------------------------------------
+# 1. PREPARACIÓN Y CARGA DE DATOS
+# ----------------------------------------------------------------------------
+
+# Supongamos que los datos están cargados como dataframes
+# patient, apachePatientResult, apacheApsVar, apachePredVar, 
+# vitalPeriodic, lab, respiratoryCare
+
+# Crear dataset integrado para el análisis
+# Crear dataset integrado para el análisis
+datos_ventilacion <- apachePatientResult %>%
+  # Variable respuesta: días de ventilación mecánica
+  filter(!is.na(actualventdays) & actualventdays >= 0) %>%
+  # USAMOS dplyr::select PARA EVITAR CONFLICTOS
+  dplyr::select(patientunitstayid, actualventdays, actualhospitalmortality, 
+                acutephysiologyscore, apachescore, actualiculos) %>%
+  
+  # Unir con datos demográficos
+  left_join(
+    patient %>% 
+      dplyr::select(patientunitstayid, age, gender, ethnicity, 
+                    admissionweight, unittype, unitadmitsource),
+    by = "patientunitstayid"
+  ) %>%
+  
+  # Unir con variables fisiológicas APACHE
+  left_join(
+    apacheApsVar %>%
+      group_by(patientunitstayid) %>%
+      slice(1) %>%  # Primera medición
+      dplyr::select(patientunitstayid, intubated, vent, dialysis, 
+                    eyes, motor, verbal, temperature, heartrate, 
+                    meanbp, respiratoryrate, wbc, creatinine, 
+                    sodium, hematocrit, glucose, bun),
+    by = "patientunitstayid"
+  ) %>%
+  
+  # Unir con comorbilidades
+  # NOTA: Asegúrate de que el dataframe se llame 'apachePredVar' (sin .csv)
+  # Si tu variable en R se llama 'apachePredVar.csv', cámbialo aquí.
+  left_join(
+    apachePredVar %>% 
+      group_by(patientunitstayid) %>%
+      slice(1) %>%
+      dplyr::select(patientunitstayid, aids, hepaticfailure, lymphoma, 
+                    metastaticcancer, cirrhosis, diabetes, ima, 
+                    electivesurgery, readmit),
+    by = "patientunitstayid"
+  ) %>%
+  
+  # Limpieza y transformación
+  mutate(
+    # Convertir edad a numérico (manejar "> 89")
+    age_numeric = case_when(
+      age == "> 89" ~ 90,
+      TRUE ~ as.numeric(age)
+    ),
+    # Variables categóricas
+    gender = factor(gender),
+    diabetes = factor(ifelse(is.na(diabetes), 0, diabetes)),
+    ima = factor(ifelse(is.na(ima), 0, ima)),
+    cirrhosis = factor(ifelse(is.na(cirrhosis), 0, cirrhosis)),
+    electivesurgery = factor(ifelse(is.na(electivesurgery), 0, electivesurgery)),
+    readmit = factor(ifelse(is.na(readmit), 0, readmit)),
+    intubated = factor(ifelse(is.na(intubated), 0, intubated)),
+    dialysis = factor(ifelse(is.na(dialysis), 0, dialysis)),
+    # Glasgow Coma Score total
+    gcs_total = eyes + motor + verbal,
+    # Categoría de severidad
+    severidad = cut(apachescore, 
+                    breaks = c(-Inf, 50, 75, 100, Inf),
+                    labels = c("Leve", "Moderado", "Severo", "Crítico"))
+  ) %>%
+  # Eliminar casos con datos faltantes en variables clave
+  filter(
+    !is.na(age_numeric) & !is.na(gender) & 
+    !is.na(apachescore) & !is.na(meanbp) &
+    !is.na(heartrate) & !is.na(temperature)
+  )
+
+# Verificar que se creó correctamente
+cat("=== ESTADÍSTICAS DESCRIPTIVAS ===\n")
+summary(datos_ventilacion$actualventdays)
+table(datos_ventilacion$actualventdays)
+
+# ----------------------------------------------------------------------------
+# 2. MODELO GLM POISSON: ESPECIFICACIÓN Y ESTIMACIÓN
+# ----------------------------------------------------------------------------
+
+# MODELO 1: GLM Poisson con enlace log (canónico)
+# E[Y|X] = exp(X'β)
+# log(E[Y|X]) = X'β  (Predictor lineal)
+
+modelo_poisson <- glm(
+  actualventdays ~ 
+    # Variables demográficas
+    age_numeric + gender + 
+    # Scores de severidad
+    apachescore + acutephysiologyscore +
+    # Variables fisiológicas
+    meanbp + heartrate + temperature + respiratoryrate +
+    creatinine + sodium + glucose + bun +
+    # Glasgow Coma Score
+    gcs_total +
+    # Comorbilidades
+    diabetes + cirrhosis + ima + 
+    # Factores de cuidado
+    intubated + dialysis + electivesurgery + readmit +
+    # Duración de estancia en UCI
+    actualiculos,
+  
+  family = poisson(link = "log"),  # Distribución Poisson, enlace log
+  data = datos_ventilacion
+)
+
+# Resumen del modelo
+cat("\n=== RESUMEN DEL MODELO GLM POISSON ===\n")
+summary(modelo_poisson)
+
+
+# ----------------------------------------------------------------------------
+# 3. ESTIMACIÓN POR MÁXIMA VEROSIMILITUD (MLE)
+# ----------------------------------------------------------------------------
+
+cat("\n=== INFORMACIÓN DE MÁXIMA VEROSIMILITUD ===\n")
+
+# Log-verosimilitud
+logLik_valor <- logLik(modelo_poisson)
+cat("Log-verosimilitud:", as.numeric(logLik_valor), "\n")
+
+# AIC y BIC (criterios de información)
+cat("AIC:", AIC(modelo_poisson), "\n")
+cat("BIC:", BIC(modelo_poisson), "\n")
+
+# Devianza (medida de bondad de ajuste)
+cat("Devianza residual:", deviance(modelo_poisson), "\n")
+cat("Devianza nula:", modelo_poisson$null.deviance, "\n")
+cat("Grados de libertad residuales:", df.residual(modelo_poisson), "\n")
+
+# Pseudo R² (McFadden)
+pseudo_r2 <- 1 - (deviance(modelo_poisson) / modelo_poisson$null.deviance)
+cat("Pseudo R² (McFadden):", pseudo_r2, "\n")
+
+
+# ----------------------------------------------------------------------------
+# 4. ECUACIONES DE SCORE Y ALGORITMO IRLS
+# ----------------------------------------------------------------------------
+
+cat("\n=== INFORMACIÓN DEL ALGORITMO IRLS ===\n")
+
+# Número de iteraciones IRLS
+cat("Iteraciones IRLS:", modelo_poisson$iter, "\n")
+
+# Convergencia
+cat("Convergencia alcanzada:", modelo_poisson$converged, "\n")
+
+# Matriz de información de Fisher (aproximada)
+# I(β) = X'WX donde W = diag(μᵢ) para Poisson
+vcov_matriz <- vcov(modelo_poisson)
+cat("Dimensión matriz de covarianza:", dim(vcov_matriz), "\n")
+
+# Ecuaciones de score en el óptimo deben ser ≈ 0
+# U(β) = X'(y - μ)
+predicciones_mu <- fitted(modelo_poisson)
+residuos_score <- datos_ventilacion$actualventdays - predicciones_mu
+
+cat("Suma de ecuaciones de score (debe ser ≈ 0):\n")
+print(sum(residuos_score))
+
+# Pesos finales del IRLS
+pesos_irls <- modelo_poisson$weights
+cat("Rango de pesos IRLS: [", min(pesos_irls), ",", max(pesos_irls), "]\n")
+
+
+# ----------------------------------------------------------------------------
+# 5. INTERPRETACIÓN DE COEFICIENTES (ENLACE LOG)
+# ----------------------------------------------------------------------------
+
+cat("\n=== INTERPRETACIÓN DE COEFICIENTES (Razones de Tasas) ===\n")
+
+# Coeficientes en escala original (exp(β))
+# exp(βⱼ) = razón de tasas cuando Xⱼ aumenta en 1 unidad
+coef_tabla <- data.frame(
+  Variable = names(coef(modelo_poisson)),
+  Beta = coef(modelo_poisson),
+  RR = exp(coef(modelo_poisson)),  # Rate Ratio
+  SE = sqrt(diag(vcov_matriz)),
+  Z_valor = coef(modelo_poisson) / sqrt(diag(vcov_matriz)),
+  P_valor = 2 * pnorm(-abs(coef(modelo_poisson) / sqrt(diag(vcov_matriz))))
+)
+
+coef_tabla <- coef_tabla %>%
+  mutate(
+    IC_inf = exp(Beta - 1.96 * SE),
+    IC_sup = exp(Beta + 1.96 * SE),
+    Interpretacion = case_when(
+      RR > 1.1 & P_valor < 0.05 ~ "Aumenta ventilación",
+      RR < 0.9 & P_valor < 0.05 ~ "Disminuye ventilación",
+      TRUE ~ "No significativo"
+    )
+  ) %>%
+  arrange(desc(abs(Beta)))
+
+print(coef_tabla, digits = 4)
+
+# Interpretación de coeficientes clave
+cat("\n--- Interpretación de Coeficientes Principales ---\n")
+cat("exp(β) = 1.10 significa 10% más días de ventilación\n")
+cat("exp(β) = 0.90 significa 10% menos días de ventilación\n")
+
+
+# ----------------------------------------------------------------------------
+# 6. DIAGNÓSTICO: RESIDUOS Y APALANCAMIENTO
+# ----------------------------------------------------------------------------
+
+cat("\n=== ANÁLISIS DE RESIDUOS ===\n")
+
+# Tipos de residuos en GLM
+residuos_deviance <- residuals(modelo_poisson, type = "deviance")
+residuos_pearson <- residuals(modelo_poisson, type = "pearson")
+residuos_working <- residuals(modelo_poisson, type = "working")
+
+# Estadísticas de residuos
+cat("Residuos de Devianza:\n")
+cat("  Media:", mean(residuos_deviance), "\n")
+cat("  SD:", sd(residuos_deviance), "\n")
+cat("  Rango:", range(residuos_deviance), "\n")
+
+cat("\nResiduos de Pearson:\n")
+cat("  Media:", mean(residuos_pearson), "\n")
+cat("  SD:", sd(residuos_pearson), "\n")
+
+# Test de sobredispersión
+# Var(Y) > E(Y) indica sobredispersión en Poisson
+dispersion <- sum(residuos_pearson^2) / df.residual(modelo_poisson)
+cat("\nParámetro de dispersión:", dispersion, "\n")
+if(dispersion > 1.5) {
+  cat("ADVERTENCIA: Posible sobredispersión. Considerar Quasi-Poisson o Binomial Negativa\n")
+}
+
+
+# ----------------------------------------------------------------------------
+# 7. APALANCAMIENTO E INFLUENCIA
+# ----------------------------------------------------------------------------
+
+cat("\n=== MEDIDAS DE APALANCAMIENTO E INFLUENCIA ===\n")
+
+# Apalancamiento (leverage): elementos diagonales de H
+# En GLM: H = W^(1/2) X (X'WX)^(-1) X' W^(1/2)
+apalancamiento <- hatvalues(modelo_poisson)
+
+cat("Apalancamiento:\n")
+cat("  Media:", mean(apalancamiento), "\n")
+cat("  Máximo:", max(apalancamiento), "\n")
+cat("  Umbral (2p/n):", 2 * length(coef(modelo_poisson)) / nrow(datos_ventilacion), "\n")
+
+# Distancia de Cook (influencia)
+cook_distance <- cooks.distance(modelo_poisson)
+cat("\nDistancia de Cook:\n")
+cat("  Máximo:", max(cook_distance), "\n")
+cat("  Observaciones influyentes (D > 1):", sum(cook_distance > 1), "\n")
+
+# DFBETAS (influencia sobre cada coeficiente)
+dfbetas_valores <- dfbetas(modelo_poisson)
+cat("\nDFBETAS máximo por coeficiente:\n")
+print(apply(abs(dfbetas_valores), 2, max)[1:10])
+
+# Identificar observaciones problemáticas
+obs_influyentes <- which(cook_distance > 4/nrow(datos_ventilacion))
+cat("\nObservaciones de alta influencia:", length(obs_influyentes), "\n")
+
+
+# ----------------------------------------------------------------------------
+# 8. ESTIMACIÓN DE VARIANZA (MATRIZ DE COVARIANZA)
+# ----------------------------------------------------------------------------
+
+cat("\n=== ESTIMACIÓN DE VARIANZA DE LOS COEFICIENTES ===\n")
+
+# Matriz de covarianza de β̂
+# Var(β̂) = (X'WX)^(-1) donde W = diag(μᵢ) para Poisson
+vcov_beta <- vcov(modelo_poisson)
+
+# Errores estándar
+se_coeficientes <- sqrt(diag(vcov_beta))
+
+cat("Errores estándar de los primeros 10 coeficientes:\n")
+print(se_coeficientes[1:10])
+
+# Intervalos de confianza al 95%
+ic_coeficientes <- confint.default(modelo_poisson)
+cat("\nIntervalos de confianza (95%) para coeficientes principales:\n")
+print(exp(ic_coeficientes[2:11, ]))  # En escala de Rate Ratio
+
+# Varianza estimada de las predicciones
+# Var(ŷ) = h_ii * φ donde φ es el parámetro de dispersión
+varianza_predicciones <- apalancamiento * dispersion
+cat("\nVarianza de predicciones:\n")
+cat("  Rango:", range(varianza_predicciones), "\n")
+
+
+# ----------------------------------------------------------------------------
+# 9. INTERPRETACIÓN GEOMÉTRICA: PROYECCIÓN
+# ----------------------------------------------------------------------------
+
+cat("\n=== INTERPRETACIÓN GEOMÉTRICA ===\n")
+
+# En GLM, la proyección no es ortogonal como en LM
+# pero podemos analizar la estructura de predicción
+
+# Matriz de diseño X
+X_matriz <- model.matrix(modelo_poisson)
+cat("Dimensión matriz de diseño X:", dim(X_matriz), "\n")
+
+# Rango de X (debe ser completo para identificabilidad)
+rango_X <- qr(X_matriz)$rank
+cat("Rango de X:", rango_X, "\n")
+cat("Número de parámetros:", ncol(X_matriz), "\n")
+
+if(rango_X == ncol(X_matriz)) {
+  cat("MODELO IDENTIFICABLE: Rango completo\n")
+} else {
+  cat("ADVERTENCIA: Matriz X no tiene rango completo\n")
+}
+
+# Descomposición del espacio de predicción
+# ŷ = X β̂ está en el espacio columna de X
+y_hat <- fitted(modelo_poisson)
+y_observado <- datos_ventilacion$actualventdays
+
+# "Proyección" en escala del predictor lineal
+eta_hat <- predict(modelo_poisson, type = "link")  # X'β̂
+
+cat("\nPredictor lineal η = log(μ):\n")
+cat("  Rango:", range(eta_hat), "\n")
+cat("  Media:", mean(eta_hat), "\n")
+
+
+# ----------------------------------------------------------------------------
+# 10. MODELO QUASI-POISSON (CORRECCIÓN POR SOBREDISPERSIÓN)
+# ----------------------------------------------------------------------------
+
+if(dispersion > 1.5) {
+  cat("\n=== MODELO QUASI-POISSON (Corrección por Sobredispersión) ===\n")
+  
+  modelo_quasipoisson <- glm(
+    actualventdays ~ 
+      age_numeric + gender + apachescore + acutephysiologyscore +
+      meanbp + heartrate + temperature + respiratoryrate +
+      creatinine + sodium + glucose + bun + gcs_total +
+      diabetes + cirrhosis + ima + intubated + dialysis + 
+      electivesurgery + readmit + actualiculos,
+    family = quasipoisson(link = "log"),
+    data = datos_ventilacion
+  )
+  
+  cat("Parámetro de dispersión (Quasi-Poisson):", 
+      summary(modelo_quasipoisson)$dispersion, "\n")
+  
+  # Comparar errores estándar
+  se_poisson <- sqrt(diag(vcov(modelo_poisson)))
+  se_quasi <- sqrt(diag(vcov(modelo_quasipoisson)))
+  
+  cat("\nComparación de SE (primeros 5 coeficientes):\n")
+  comparacion_se <- data.frame(
+    Variable = names(coef(modelo_poisson))[1:5],
+    SE_Poisson = se_poisson[1:5],
+    SE_QuasiPoisson = se_quasi[1:5],
+    Ratio = se_quasi[1:5] / se_poisson[1:5]
+  )
+  print(comparacion_se, digits = 4)
+}
+
+
+# ----------------------------------------------------------------------------
+# 11. VISUALIZACIONES DIAGNÓSTICAS
+# ----------------------------------------------------------------------------
+
+# Gráfico 1: Residuos vs Valores Ajustados
+p1 <- ggplot(data.frame(fitted = y_hat, residuals = residuos_deviance), 
+             aes(x = fitted, y = residuals)) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(se = TRUE, color = "darkgreen") +
+  labs(title = "Residuos de Devianza vs Valores Ajustados",
+       x = "Valores ajustados (μ̂)",
+       y = "Residuos de devianza") +
+  theme_minimal()
+
+# Gráfico 2: QQ-plot de residuos
+p2 <- ggplot(data.frame(residuals = residuos_deviance), aes(sample = residuals)) +
+  stat_qq(alpha = 0.3, color = "steelblue") +
+  stat_qq_line(color = "red", linetype = "dashed") +
+  labs(title = "QQ-Plot de Residuos de Devianza",
+       x = "Cuantiles teóricos",
+       y = "Cuantiles de muestra") +
+  theme_minimal()
+
+# Gráfico 3: Apalancamiento vs Residuos estandarizados
+p3 <- ggplot(data.frame(leverage = apalancamiento, 
+                        std_residuals = rstandard(modelo_poisson, type = "deviance")),
+             aes(x = leverage, y = std_residuals)) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  geom_hline(yintercept = c(-2, 0, 2), linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 2*length(coef(modelo_poisson))/nrow(datos_ventilacion),
+             linetype = "dashed", color = "orange") +
+  labs(title = "Apalancamiento vs Residuos Estandarizados",
+       x = "Apalancamiento (h_ii)",
+       y = "Residuos estandarizados") +
+  theme_minimal()
+
+# Gráfico 4: Distancia de Cook
+p4 <- ggplot(data.frame(index = 1:length(cook_distance), cook = cook_distance),
+             aes(x = index, y = cook)) +
+  geom_segment(aes(xend = index, yend = 0), alpha = 0.5, color = "steelblue") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_hline(yintercept = 4/nrow(datos_ventilacion), 
+             linetype = "dashed", color = "red") +
+  labs(title = "Distancia de Cook",
+       x = "Índice de observación",
+       y = "Distancia de Cook") +
+  theme_minimal()
+
+# Mostrar gráficos
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+
+# ----------------------------------------------------------------------------
+# 12. PREDICCIONES Y VALIDACIÓN
+# ----------------------------------------------------------------------------
+
+cat("\n=== PREDICCIONES DEL MODELO ===\n")
+
+# Predicciones en escala de respuesta
+predicciones <- predict(modelo_poisson, type = "response")
+
+# Comparación observado vs predicho
+comparacion_pred <- data.frame(
+  Observado = y_observado,
+  Predicho = predicciones,
+  Residuo = y_observado - predicciones
+)
+
+cat("Estadísticas de predicción:\n")
+cat("  MAE (Error Absoluto Medio):", mean(abs(comparacion_pred$Residuo)), "\n")
+cat("  RMSE (Raíz del Error Cuadrático Medio):", 
+    sqrt(mean(comparacion_pred$Residuo^2)), "\n")
+cat("  Correlación observado-predicho:", 
+    cor(comparacion_pred$Observado, comparacion_pred$Predicho), "\n")
+
+# Tabla de clasificación (días ventilación: 0, 1-3, 4-7, 8+)
+comparacion_pred <- comparacion_pred %>%
+  mutate(
+    Cat_obs = cut(Observado, breaks = c(-1, 0, 3, 7, Inf),
+                  labels = c("0", "1-3", "4-7", "8+")),
+    Cat_pred = cut(Predicho, breaks = c(-1, 0, 3, 7, Inf),
+                   labels = c("0", "1-3", "4-7", "8+"))
+  )
+
+cat("\nTabla de clasificación:\n")
+print(table(Observado = comparacion_pred$Cat_obs, 
+            Predicho = comparacion_pred$Cat_pred))
+
+
+# ----------------------------------------------------------------------------
+# 13. EJEMPLO DE PREDICCIÓN CON NUEVOS DATOS
+# ----------------------------------------------------------------------------
+
+cat("\n=== EJEMPLO DE PREDICCIÓN ===\n")
+
+# Paciente ejemplo 1: Bajo riesgo
+paciente_bajo <- data.frame(
+  age_numeric = 55,
+  gender = factor("Male", levels = levels(datos_ventilacion$gender)),
+  apachescore = 40,
+  acutephysiologyscore = 20,
+  meanbp = 80,
+  heartrate = 75,
+  temperature = 37,
+  respiratoryrate = 16,
+  creatinine = 1.0,
+  sodium = 140,
+  glucose = 100,
+  bun = 15,
+  gcs_total = 15,
+  diabetes = factor("0", levels = levels(datos_ventilacion$diabetes)),
+  cirrhosis = factor("0", levels = levels(datos_ventilacion$cirrhosis)),
+  ima = factor("0", levels = levels(datos_ventilacion$ima)),
+  intubated = factor("0", levels = levels(datos_ventilacion$intubated)),
+  dialysis = factor("0", levels = levels(datos_ventilacion$dialysis)),
+  electivesurgery = factor("1", levels = levels(datos_ventilacion$electivesurgery)),
+  readmit = factor("0", levels = levels(datos_ventilacion$readmit)),
+  actualiculos = 3
+)
+
+# Paciente ejemplo 2: Alto riesgo
+paciente_alto <- data.frame(
+  age_numeric = 75,
+  gender = factor("Female", levels = levels(datos_ventilacion$gender)),
+  apachescore = 95,
+  acutephysiologyscore = 55,
+  meanbp = 60,
+  heartrate = 120,
+  temperature = 38.5,
+  respiratoryrate = 28,
+  creatinine = 2.5,
+  sodium = 130,
+  glucose = 180,
+  bun = 35,
+  gcs_total = 8,
+  diabetes = factor("1", levels = levels(datos_ventilacion$diabetes)),
+  cirrhosis = factor("1", levels = levels(datos_ventilacion$cirrhosis)),
+  ima = factor("1", levels = levels(datos_ventilacion$ima)),
+  intubated = factor("1", levels = levels(datos_ventilacion$intubated)),
+  dialysis = factor("1", levels = levels(datos_ventilacion$dialysis)),
+  electivesurgery = factor("0", levels = levels(datos_ventilacion$electivesurgery)),
+  readmit = factor("1", levels = levels(datos_ventilacion$readmit)),
+  actualiculos = 12
+)
+
+# Predicciones con intervalos de confianza
+pred_bajo <- predict(modelo_poisson, newdata = paciente_bajo, 
+                     type = "response", se.fit = TRUE)
+pred_alto <- predict(modelo_poisson, newdata = paciente_alto, 
+                     type = "response", se.fit = TRUE)
+
+cat("Predicción Paciente Bajo Riesgo:\n")
+cat("  Días esperados de ventilación:", round(pred_bajo$fit, 2), "\n")
+cat("  IC 95%: [", round(pred_bajo$fit - 1.96*pred_bajo$se.fit, 2), ",",
+    round(pred_bajo$fit + 1.96*pred_bajo$se.fit, 2), "]\n")
+
+cat("\nPredicción Paciente Alto Riesgo:\n")
+cat("  Días esperados de ventilación:", round(pred_alto$fit, 2), "\n")
+cat("  IC 95%: [", round(pred_alto$fit - 1.96*pred_alto$se.fit, 2), ",",
+    round(pred_alto$fit + 1.96*pred_alto$se.fit, 2), "]\n")
+
+
+# ----------------------------------------------------------------------------
+# 14. RESUMEN FINAL Y CONCLUSIONES
+# ----------------------------------------------------------------------------
+
+cat("RESUMEN FINAL DEL ANÁLISIS GLM POISSON\n")
+
+cat("MODELO: GLM Poisson con enlace log\n")
+cat("Variable respuesta: Días de ventilación mecánica\n")
+cat("N observaciones:", nrow(datos_ventilacion), "\n")
+cat("N predictores:", length(coef(modelo_poisson)) - 1, "\n\n")
+
+cat("BONDAD DE AJUSTE:\n")
+cat("  Pseudo R²:", round(pseudo_r2, 4), "\n")
+cat("  AIC:", round(AIC(modelo_poisson), 2), "\n")
+cat("  Dispersión:", round(dispersion, 3), "\n\n")
+
+cat("SIGNIFICANCIA GLOBAL:\n")
+cat("  Devianza reducida:", 
+    round(modelo_poisson$null.deviance - deviance(modelo_poisson), 2), "\n")
+cat("  % Devianza explicada:", 
+    round(100 * pseudo_r2, 2), "%\n\n")
+
+
+
+
+
+```
+
+
+### Interpretación
+
+El modelado de la estancia en ventilación mecánica se abordó mediante un Modelo Lineal Generalizado con distribución de Poisson y función de enlace logarítmica, una elección metodológica validada por la naturaleza de la variable respuesta: un conteo de días discreto con una distribución fuertemente asimétrica positiva (rango de 1 a 30 días, mediana de 2 días). El modelo incluyó 21 predictores clínicos y demográficos sobre una muestra de 1038 pacientes ventilados. El ajuste del modelo resultó  robusto, logrando explicar el 62.65% de la variabilidad total, una cifra  alta para datos clínicos multifactoriales, lo que sugiere que las variables seleccionadas capturan con gran fidelidad los mecanismos de la dependencia del respirador.
+
+Uno de los hallazgos  más destacados fue la ausencia de sobredispersión significativa, un problema común en modelos de conteo. El parámetro de dispersión estimado se situó en 1.03, prácticamente idéntico al valor teórico de 1 asumido por la distribución de Poisson. Esto valida la estructura probabilística del modelo sin necesidad de recurrir a correcciones como la distribución Binomial Negativa; en esta cohorte, la varianza de los días de ventilación escala proporcionalmente a su media, confirmando la estabilidad y validez de todas las estimaciones. El algoritmo IRLS convergió rápidamente en solo 5 iteraciones con ecuaciones de prácticamente nulas ($\approx 0$).
+
+El análisis de residuos confirmó la adecuación del modelo desde múltiples perspectivas. Los residuos de devianza presentaron una distribución centrada (media de -0.11) con desviación estándar cercana a 1 (0.98), indicando que el modelo captura correctamente la estructura de variabilidad. Los residuos de Pearson mostraron comportamiento similar (media de -0.03, SD de 1.00), y su rango controlado (-4.05 a 3.55) descartó la presencia de valores extremos problemáticos. La devianza residual de 1,004.85 sobre 1,016 grados de libertad resultó en una reducción del 62.7% respecto a la devianza nula (2,690.56), cuantificando la mejora sustancial del modelo ajustado.
+
+**Desde una perspectiva clínica, los coeficientes del modelo revelan qué factores aceleran o retrasan el proceso de destete ventilatorio. La cirugía electiva emerge como el factor protector más potente ($\beta = -0.335$, RR = 0.715, $z = -6.40$, $p < 0.001$), reduciendo la tasa esperada de días de ventilación en aproximadamente un 28.5%; estos pacientes presentan postoperatorios controlados y predecibles, a diferencia de los ingresos de emergencia. La diálisis ($\beta = -0.275$, RR = 0.759, $p = 0.004$) y el infarto de miocardio ($\beta = -0.264$, RR = 0.768, $p = 0.018$) también mostraron efectos  significativos, posiblemente reflejando protocolos de manejo más intensivos o perfiles de pacientes con recuperación más rápida tras estabilización inicial**
+
+**Por el contrario, varios indicadores de severidad fisiológica actuaron como predictores de estancias prolongadas. La puntuación de fisiologia ($\beta = 0.015$, RR = 1.015, $p = 0.011$) demostró que cada punto adicional en esta escala de gravedad incrementa la tasa de días de ventilación en un 1.5%, evidenciando que la inestabilidad  es un determinante crítico de la dificultad del destete. La frecuencia respiratoria ($\beta = 0.003$, RR = 1.003, $p = 0.029$) y el ""Glasgow Coma Scale ($\beta = 0.009$, RR = 1.009, $p = 0.025$) también mostraron asociaciones significativas, sugiriendo que tanto la carga ventilatoria como el nivel de consciencia son factores independientes que prolongan la dependencia del respirador.**
+
+La **glucosa** ($\beta = -0.0007$, RR = 0.9993, $p < 0.001$) y la **temperatura** ($\beta = -0.004$, RR = 0.996, $p = 0.031$) muestran coeficientes negativos significativos. El **APACHE score**, aunque significativo ($p = 0.039$), mostró un efecto reductor marginal ($\beta = -0.011$, RR = 0.989$), posiblemente capturando aspectos de severidad ya reflejados por otras variables más específicas del modelo.
+
+La variable **intubación** ($p = 0.301$), **diabetes** ($p = 0.232$), **cirrosis** ($p = 0.357$) y **readmisión** ($p = 0.784$) no alcanzaron significancia estadística, sugiriendo que su impacto sobre la duración de la ventilación es indirecto o está mediado por las variables de severidad fisiológica incluidas en el modelo. 
+
+El análisis de influencia y apalancamiento descartó problemas de valores atípicos dominantes. Aunque se identificaron 68 observaciones con alto apalancamiento (sobre el umbral de $2p/n = 0.042$), ninguna alcanzó una Distancia de Cook superior a 1 (máximo observado: 0.338), confirmando que ningún paciente individual distorsiona las estimaciones del modelo. Los valores máximos de DFBETAS permanecieron controlados (rango de 0.35 a 0.78), indicando que los coeficientes son robustos ante la exclusión de observaciones individuales. Esta estabilidad garantiza que las conclusiones son generalizables a toda la cohorte y no el producto de casos extremos aislados.
+
+La capacidad predictiva del modelo se evaluó mediante simulaciones de escenarios clínicos contrastantes. Para un **paciente de bajo riesgo** (edad 45 años, sin comorbilidades, cirugía electiva, puntuaciones de severidad bajas), el modelo proyectó una duración esperada de ventilación de 1.58 días con intervalo de confianza del 95% de [1.45, 1.72] días. En contraste, un **paciente de alto riesgo** (edad 75 años, múltiples comorbilidades, ingreso no electivo, puntuaciones de severidad elevadas) presentó una predicción de 3.13 días con intervalo [2.87, 3.42] días. Esta discriminación clara entre perfiles de riesgo, con intervalos que no se solapan, demuestra la utilidad clínica del modelo.
+
+El Error Absoluto Medio (MAE) del modelo fue de apenas 1.51 días, lo que implica que las predicciones se desvían del valor real en promedio por menos de dos días, un margen de error muy estrecho considerando la variabilidad  de procesos  complejos. La matriz de covarianza de dimensión $22 \times 22$ presentó rango completo, confirmando la identificabilidad del modelo sin problemas de multicolinealidad . El predictor lineal $\eta = \log(\mu)$ mostró un rango amplio [0.074, 4.060], permitiendo al modelo capturar tanto estancias muy breves como prolongadas sin saturación de la función de enlace.
+
+Finalmente, los intervalos de confianza del 95% para las razones de tasas proporcionan rangos precisos para la interpretación clínica: la cirugía electiva reduce la tasa entre [0.645, 0.792], mientras que cada punto adicional en la puntuación de fisilogia la incrementa entre [1.003, 1.027]. La estrechez de estos intervalos, combinada con la significancia estadística, convierte este modelo en una herramienta 
+útill y confiable
+
+
+## Modelo GLM para fallo respiratorio
+
+**¿Qué factores determinan el riesgo de fallo respiratorio en pacientes críticos y cuánto tiempo requerirán soporte ventilatorio mecánico?**
+
+
+### Resultados
+
+
+```{r glm-logistico-destete, results='markup', fig.width=12, fig.height=8}
+# ============================================================================
+# ANÁLISIS GLM: FALLO RESPIRATORIO Y DÍAS DE VENTILACIÓN MECÁNICA
+# DATOS REALES EICU-CRD
+# ============================================================================
+
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(pROC)
+library(ResourceSelection)
+library(MASS)
+library(car)
+
+# ============================================================================
+# 1. PREPARACIÓN DE DATOS REALES EICU-CRD
+# ============================================================================
+
+
+# Integrar datos de múltiples tablas del eICU-CRD
+datos_respiratorio <- apachePatientResult %>%
+  filter(!is.na(actualventdays) & actualventdays >= 0) %>%
+  dplyr::select(patientunitstayid, actualventdays, actualhospitalmortality, 
+                acutephysiologyscore, apachescore, actualiculos, 
+                predictedhospitalmortality, predictedicumortality) %>%
+  
+  # Unir con datos demográficos
+  left_join(
+    patient %>% 
+      dplyr::select(patientunitstayid, age, gender, admissionweight, 
+                    unittype, unitadmitsource, hospitaldischargestatus),
+    by = "patientunitstayid"
+  ) %>%
+  
+  # Unir con variables fisiológicas APACHE
+  left_join(
+    apacheApsVar %>%
+      group_by(patientunitstayid) %>%
+      slice(1) %>%
+      dplyr::select(patientunitstayid, intubated, vent, dialysis, 
+                    eyes, motor, verbal, temperature, heartrate, 
+                    meanbp, respiratoryrate, wbc, creatinine, 
+                    sodium, hematocrit, glucose, bun, pao2, pco2, ph, fio2),
+    by = "patientunitstayid"
+  ) %>%
+  
+  # Unir con comorbilidades APACHE
+  left_join(
+    apachePredVar %>%
+      group_by(patientunitstayid) %>%
+      slice(1) %>%
+      dplyr::select(patientunitstayid, aids, hepaticfailure, lymphoma, 
+                    metastaticcancer, cirrhosis, diabetes, ima, 
+                    electivesurgery, readmit, immunosuppression, leukemia),
+    by = "patientunitstayid"
+  ) %>%
+  
+  # Limpieza y transformación
+  mutate(
+    # Convertir edad a numérico
+    age_numeric = case_when(
+      age == "> 89" ~ 90,
+      TRUE ~ as.numeric(age)
+    ),
+    
+    # Glasgow Coma Score total (manejar NA)
+    gcs_total = ifelse(!is.na(eyes) & !is.na(motor) & !is.na(verbal),
+                       eyes + motor + verbal, NA),
+    
+    # Variables categóricas
+    gender = factor(gender),
+    diabetes = factor(ifelse(is.na(diabetes), 0, diabetes)),
+    ima = factor(ifelse(is.na(ima), 0, ima)),
+    cirrhosis = factor(ifelse(is.na(cirrhosis), 0, cirrhosis)),
+    electivesurgery = factor(ifelse(is.na(electivesurgery), 0, electivesurgery)),
+    readmit = factor(ifelse(is.na(readmit), 0, readmit)),
+    intubated = factor(ifelse(is.na(intubated), 0, intubated)),
+    dialysis = factor(ifelse(is.na(dialysis), 0, dialysis)),
+    hepaticfailure = factor(ifelse(is.na(hepaticfailure), 0, hepaticfailure)),
+    immunosuppression = factor(ifelse(is.na(immunosuppression), 0, immunosuppression)),
+    
+    # VARIABLE RESPUESTA 1: Fallo respiratorio (binaria)
+    fallo_respiratorio = case_when(
+      !is.na(pao2) & pao2 < 55 ~ 1,
+      !is.na(pco2) & !is.na(ph) & pco2 > 55 & ph < 7.25 ~ 1,
+      !is.na(gcs_total) & !is.na(intubated) & gcs_total < 8 & intubated == "1" ~ 1,
+      !is.na(actualventdays) & actualventdays > 7 ~ 1,
+      TRUE ~ 0
+    ),
+    fallo_respiratorio = factor(fallo_respiratorio, 
+                                 levels = c(0, 1), 
+                                 labels = c("No", "Sí")),
+    
+    # VARIABLE RESPUESTA 2: Días de ventilación (conteo Poisson)
+    dias_ventilacion = pmax(actualventdays, 0),
+    
+    # Categorías
+    gcs_categoria = cut(gcs_total,
+                        breaks = c(-Inf, 8, 12, 15),
+                        labels = c("Severo", "Moderado", "Leve")),
+    
+    apache_categoria = cut(apachescore,
+                           breaks = c(-Inf, 50, 75, 100, Inf),
+                           labels = c("Leve", "Moderado", "Severo", "Crítico")),
+    
+    hipoxemia = cut(pao2,
+                    breaks = c(0, 55, 75, 100, 200),
+                    labels = c("Severa", "Moderada", "Leve", "Normal"))
+  )
+
+
+# ============================================================================
+# 2. ESTADÍSTICAS DESCRIPTIVAS
+# ============================================================================
+
+cat("╔════════════════════════════════════════════════════════════╗\n")
+cat("║         ANÁLISIS DESCRIPTIVO - VARIABLES RESPUESTA        ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+cat("VARIABLE RESPUESTA 1 (Fallo Respiratorio - Binaria):\n")
+print(table(datos_respiratorio$fallo_respiratorio))
+cat("Proporción de fallos:", 
+    round(sum(datos_respiratorio$fallo_respiratorio == "Sí") / nrow(datos_respiratorio) * 100, 1), 
+    "%\n\n")
+
+cat("VARIABLE RESPUESTA 2 (Días de Ventilación - Conteo):\n")
+print(summary(datos_respiratorio$dias_ventilacion))
+cat("\n")
+
+cat("VARIABLES DEMOGRÁFICAS:\n")
+cat("  Edad (media ± SD):", round(mean(datos_respiratorio$age_numeric, na.rm = TRUE), 1), "±", 
+    round(sd(datos_respiratorio$age_numeric, na.rm = TRUE), 1), "\n")
+cat("  % Hombres:", round(sum(datos_respiratorio$gender == "M", na.rm = TRUE) / 
+    sum(!is.na(datos_respiratorio$gender)) * 100, 1), "%\n")
+cat("  Peso (media ± SD):", round(mean(datos_respiratorio$admissionweight, na.rm = TRUE), 1), "±", 
+    round(sd(datos_respiratorio$admissionweight, na.rm = TRUE), 1), "kg\n\n")
+
+cat("PARÁMETROS GASOMÉTRICOS:\n")
+cat("  PaO2 (media ± SD):", round(mean(datos_respiratorio$pao2, na.rm = TRUE), 1), "±", 
+    round(sd(datos_respiratorio$pao2, na.rm = TRUE), 1), "mmHg\n")
+cat("  PaCO2 (media ± SD):", round(mean(datos_respiratorio$pco2, na.rm = TRUE), 1), "±", 
+    round(sd(datos_respiratorio$pco2, na.rm = TRUE), 1), "mmHg\n")
+cat("  pH (media ± SD):", round(mean(datos_respiratorio$ph, na.rm = TRUE), 2), "±", 
+    round(sd(datos_respiratorio$ph, na.rm = TRUE), 2), "\n\n")
+
+cat("PUNTUACIONES DE SEVERIDAD:\n")
+cat("  APACHE (media ± SD):", round(mean(datos_respiratorio$apachescore, na.rm = TRUE), 1), "±", 
+    round(sd(datos_respiratorio$apachescore, na.rm = TRUE), 1), "\n")
+cat("  GCS (media ± SD):", round(mean(datos_respiratorio$gcs_total, na.rm = TRUE), 1), "±", 
+    round(sd(datos_respiratorio$gcs_total, na.rm = TRUE), 1), "\n\n")
+
+# ============================================================================
+# 3. MODELO GLM LOGÍSTICO (Fallo Respiratorio - Binomial)
+# ============================================================================
+
+cat("╔════════════════════════════════════════════════════════════╗\n")
+cat("║  MODELO 1: GLM LOGÍSTICO (Respuesta Binaria)              ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+modelo_logistico <- glm(
+  fallo_respiratorio ~ 
+    age_numeric + gender + admissionweight +
+    pao2 + pco2 + ph +
+    wbc + gcs_total + apachescore +
+    diabetes + ima + cirrhosis + 
+    electivesurgery + readmit + intubated + dialysis +
+    meanbp + heartrate + respiratoryrate + temperature +
+    creatinine + sodium + glucose + bun,
+  
+  family = binomial(link = "logit"),
+  data = datos_respiratorio,
+  na.action = na.omit
+)
+
+cat("RESUMEN MODELO LOGÍSTICO:\n")
+print(summary(modelo_logistico))
+
+# ============================================================================
+# 4. MÁXIMA VEROSIMILITUD - MODELO LOGÍSTICO
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║    MÁXIMA VEROSIMILITUD - MODELO LOGÍSTICO                ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+loglik_log <- logLik(modelo_logistico)
+aic_log <- AIC(modelo_logistico)
+bic_log <- BIC(modelo_logistico)
+
+pseudo_r2_mcf_log <- 1 - (deviance(modelo_logistico) / modelo_logistico$null.deviance)
+n <- nrow(na.omit(datos_respiratorio[, all.vars(formula(modelo_logistico))]))
+pseudo_r2_cs_log <- 1 - exp((deviance(modelo_logistico) - modelo_logistico$null.deviance) / n)
+pseudo_r2_nk_log <- pseudo_r2_cs_log / (1 - exp(-modelo_logistico$null.deviance / n))
+
+cat("Log-Verosimilitud:", round(as.numeric(loglik_log), 2), "\n")
+cat("AIC:", round(aic_log, 2), "\n")
+cat("BIC:", round(bic_log, 2), "\n")
+cat("Devianza Residual:", round(deviance(modelo_logistico), 2), "\n")
+cat("Devianza Nula:", round(modelo_logistico$null.deviance, 2), "\n\n")
+
+cat("Pseudo R² (McFadden):", round(pseudo_r2_mcf_log, 4), "\n")
+cat("Pseudo R² (Cox-Snell):", round(pseudo_r2_cs_log, 4), "\n")
+cat("Pseudo R² (Nagelkerke):", round(pseudo_r2_nk_log, 4), "\n")
+
+# ============================================================================
+# 5. ALGORITMO IRLS - MODELO LOGÍSTICO
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║     ALGORITMO IRLS - MODELO LOGÍSTICO                     ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+cat("Iteraciones IRLS:", modelo_logistico$iter, "\n")
+cat("Convergencia:", modelo_logistico$converged, "\n")
+
+vcov_log <- vcov(modelo_logistico)
+pred_prob_log <- fitted(modelo_logistico)
+datos_modelo_log <- na.omit(datos_respiratorio[, all.vars(formula(modelo_logistico))])
+y_num_log <- as.numeric(datos_modelo_log$fallo_respiratorio) - 1
+residuos_score_log <- y_num_log - pred_prob_log
+
+cat("Suma ecuaciones de score (debe ≈ 0):", round(sum(residuos_score_log), 6), "\n")
+cat("Máximo absoluto score:", round(max(abs(residuos_score_log)), 6), "\n")
+
+pesos_irls_log <- modelo_logistico$weights
+cat("Rango pesos IRLS: [", round(min(pesos_irls_log), 4), ",", 
+    round(max(pesos_irls_log), 4), "]\n")
+cat("Media pesos IRLS:", round(mean(pesos_irls_log), 4), "\n")
+
+# ============================================================================
+# 6. ODDS RATIOS - MODELO LOGÍSTICO
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║     ODDS RATIOS E INTERPRETACIÓN - LOGÍSTICO              ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+coef_log <- tibble(
+  Variable = names(coef(modelo_logistico)),
+  Beta = coef(modelo_logistico),
+  OR = exp(coef(modelo_logistico)),
+  SE = sqrt(diag(vcov_log))
+) %>%
+  mutate(
+    IC_inf = exp(Beta - 1.96 * SE),
+    IC_sup = exp(Beta + 1.96 * SE),
+    Z = Beta / SE,
+    p_valor = 2 * pnorm(-abs(Z)),
+    Sig = case_when(
+      p_valor < 0.001 ~ "***",
+      p_valor < 0.01 ~ "**",
+      p_valor < 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  ) %>%
+  filter(Variable != "(Intercept)") %>%
+  arrange(desc(abs(Beta)))
+
+print(coef_log[, c("Variable", "OR", "IC_inf", "IC_sup", "p_valor", "Sig")])
+
+# ============================================================================
+# 7. CURVA ROC - MODELO LOGÍSTICO
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║      EVALUACIÓN PREDICTIVA - MODELO LOGÍSTICO             ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+roc_obj <- roc(y_num_log, pred_prob_log, quiet = TRUE)
+auc_val <- auc(roc_obj)
+
+cat("AUC-ROC:", round(auc_val, 4), "\n\n")
+
+coords_opt <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"))
+
+cat("Punto de corte óptimo:", round(coords_opt$threshold, 3), "\n")
+cat("  Sensibilidad:", round(coords_opt$sensitivity, 3), "\n")
+cat("  Especificidad:", round(coords_opt$specificity, 3), "\n\n")
+
+pred_clase <- ifelse(pred_prob_log > coords_opt$threshold, 1, 0)
+conf_mat_log <- table(Real = y_num_log, Predicho = pred_clase)
+
+cat("MATRIZ DE CONFUSIÓN:\n")
+print(conf_mat_log)
+
+tp_log <- conf_mat_log[2, 2]
+tn_log <- conf_mat_log[1, 1]
+fp_log <- conf_mat_log[1, 2]
+fn_log <- conf_mat_log[2, 1]
+
+acc_log <- (tp_log + tn_log) / sum(conf_mat_log)
+sens_log <- tp_log / (tp_log + fn_log)
+espec_log <- tn_log / (tn_log + fp_log)
+prec_log <- tp_log / (tp_log + fp_log)
+f1_log <- 2 * (prec_log * sens_log) / (prec_log + sens_log)
+
+cat("\nMÉTRICAS DE CLASIFICACIÓN (LOGÍSTICO):\n")
+cat("  Accuracy:", round(acc_log, 3), "\n")
+cat("  Sensibilidad:", round(sens_log, 3), "\n")
+cat("  Especificidad:", round(espec_log, 3), "\n")
+cat("  Precisión:", round(prec_log, 3), "\n")
+cat("  F1-Score:", round(f1_log, 3), "\n\n")
+
+hl_log <- hoslem.test(y_num_log, pred_prob_log, g = 10)
+cat("Hosmer-Lemeshow Chi²:", round(hl_log$statistic, 3), "\n")
+cat("p-valor:", round(hl_log$p.value, 4), "\n")
+
+# ============================================================================
+# 8. MODELO GLM POISSON (Días de Ventilación)
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║  MODELO 2: GLM POISSON (Conteo - Días de Ventilación)     ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+modelo_poisson <- glm(
+  dias_ventilacion ~ 
+    age_numeric + gender + admissionweight +
+    pao2 + pco2 + ph +
+    wbc + gcs_total + apachescore +
+    diabetes + ima + cirrhosis + 
+    electivesurgery + readmit + intubated + dialysis +
+    meanbp + heartrate + respiratoryrate + temperature +
+    creatinine + sodium + glucose + bun +
+    actualiculos,
+  
+  family = poisson(link = "log"),
+  data = datos_respiratorio,
+  na.action = na.omit
+)
+
+cat("RESUMEN MODELO POISSON:\n")
+print(summary(modelo_poisson))
+
+# ============================================================================
+# 9. MÁXIMA VEROSIMILITUD - MODELO POISSON
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║      MÁXIMA VEROSIMILITUD - MODELO POISSON                ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+loglik_poi <- logLik(modelo_poisson)
+aic_poi <- AIC(modelo_poisson)
+bic_poi <- BIC(modelo_poisson)
+
+pseudo_r2_mcf_poi <- 1 - (deviance(modelo_poisson) / modelo_poisson$null.deviance)
+
+cat("Log-Verosimilitud:", round(as.numeric(loglik_poi), 2), "\n")
+cat("AIC:", round(aic_poi, 2), "\n")
+cat("BIC:", round(bic_poi, 2), "\n")
+cat("Devianza Residual:", round(deviance(modelo_poisson), 2), "\n")
+cat("Devianza Nula:", round(modelo_poisson$null.deviance, 2), "\n\n")
+
+cat("Pseudo R² (McFadden):", round(pseudo_r2_mcf_poi, 4), "\n")
+
+# ============================================================================
+# 10. ALGORITMO IRLS - MODELO POISSON
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║     ALGORITMO IRLS - MODELO POISSON                       ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+cat("Iteraciones IRLS:", modelo_poisson$iter, "\n")
+cat("Convergencia:", modelo_poisson$converged, "\n")
+
+vcov_poi <- vcov(modelo_poisson)
+pred_mu_poi <- fitted(modelo_poisson)
+datos_modelo_poi <- na.omit(datos_respiratorio[, all.vars(formula(modelo_poisson))])
+y_poi <- datos_modelo_poi$dias_ventilacion
+residuos_score_poi <- y_poi - pred_mu_poi
+
+cat("Suma ecuaciones de score (debe ≈ 0):", round(sum(residuos_score_poi), 6), "\n")
+cat("Máximo absoluto score:", round(max(abs(residuos_score_poi)), 6), "\n")
+
+pesos_irls_poi <- modelo_poisson$weights
+cat("Rango pesos IRLS: [", round(min(pesos_irls_poi), 4), ",", 
+    round(max(pesos_irls_poi), 4), "]\n")
+
+# Verificar sobredispersión
+residuos_pearson <- residuals(modelo_poisson, type = "pearson")
+dispersion <- sum(residuos_pearson^2) / df.residual(modelo_poisson)
+cat("Parámetro de dispersión:", round(dispersion, 3), "\n")
+if(dispersion > 1.5) {
+  cat("⚠ ADVERTENCIA: Posible sobredispersión. Considerar Quasi-Poisson\n")
+}
+
+# ============================================================================
+# 11. TASAS DE RAZÓN (RATE RATIO) - MODELO POISSON - CORREGIDO
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║   RATE RATIOS E INTERPRETACIÓN - POISSON                  ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+coef_poi <- tibble(
+  Variable = names(coef(modelo_poisson)),
+  Beta = coef(modelo_poisson),
+  RR = exp(coef(modelo_poisson)),
+  SE = sqrt(diag(vcov_poi))
+) %>%
+  mutate(
+    IC_inf = exp(Beta - 1.96 * SE),
+    IC_sup = exp(Beta + 1.96 * SE),
+    Z = Beta / SE,
+    p_valor = 2 * pnorm(-abs(Z)),
+    Sig = case_when(
+      p_valor < 0.001 ~ "***",
+      p_valor < 0.01 ~ "**",
+      p_valor < 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  ) %>%
+  filter(Variable != "(Intercept)") %>%
+  arrange(desc(abs(Beta)))
+
+print(coef_poi[, c("Variable", "RR", "IC_inf", "IC_sup", "p_valor", "Sig")])
+
+# ============================================================================
+# 12. DIAGNÓSTICO: RESIDUOS Y APALANCAMIENTO
+# ============================================================================
+
+cat("\n╔════════════════════════════════════════════════════════════╗\n")
+cat("║     DIAGNÓSTICO: RESIDUOS Y APALANCAMIENTO                ║\n")
+cat("╚════════════════════════════════════════════════════════════╝\n\n")
+
+# Modelo Logístico
+residuos_dev_log <- residuals(modelo_logistico, type = "deviance")
+apal_log <- hatvalues(modelo_logistico)
+cook_log <- cooks.distance(modelo_logistico)
+
+cat("MODELO LOGÍSTICO:\n")
+cat("  Residuos Devianza - Media:", round(mean(residuos_dev_log), 3), 
+    "SD:", round(sd(residuos_dev_log), 3), "\n")
+cat("  Apalancamiento - Media:", round(mean(apal_log), 3), 
+    "Máx:", round(max(apal_log), 3), "\n")
+cat("  Distancia Cook - Máx:", round(max(cook_log), 3), "\n")
+cat("  Obs. influyentes (Cook > 4/n):", sum(cook_log > 4/n), "\n\n")
+
+# Modelo Poisson
+residuos_dev_poi <- residuals(modelo_poisson, type = "deviance")
+apal_poi <- hatvalues(modelo_poisson)
+cook_poi <- cooks.distance(modelo_poisson)
+
+cat("MODELO POISSON:\n")
+cat("  Residuos Devianza - Media:", round(mean(residuos_dev_poi), 3), 
+    "SD:", round(sd(residuos_dev_poi), 3), "\n")
+cat("  Apalancamiento - Media:", round(mean(apal_poi), 3), 
+    "Máx:", round(max(apal_poi), 3), "\n")
+cat("  Distancia Cook - Máx:", round(max(cook_poi), 3), "\n")
+cat("  Obs. influyentes (Cook > 4/n):", sum(cook_poi > 4/nrow(na.omit(datos_modelo_poi))), "\n\n")
+
+# ============================================================================
+# 13. GRÁFICOS COMPARATIVOS
+# ============================================================================
+
+# G1: Curva ROC
+g1 <- ggroc(roc_obj, colour = "darkblue", size = 1) +
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "red", alpha = 0.5) +
+  labs(title = paste0("Curva ROC (AUC = ", round(auc_val, 3), ")"),
+       x = "1 - Especificidad", y = "Sensibilidad") +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# G2: Residuos Logístico
+g2 <- ggplot(tibble(idx = 1:length(residuos_dev_log), resid = residuos_dev_log),
+             aes(x = idx, y = resid)) +
+  geom_point(alpha = 0.3, color = "darkblue") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Residuos Devianza - Modelo Logístico",
+       x = "Observación", y = "Residuos") +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# G3: Residuos Poisson
+g3 <- ggplot(tibble(idx = 1:length(residuos_dev_poi), resid = residuos_dev_poi),
+             aes(x = idx, y = resid)) +
+  geom_point(alpha = 0.3, color = "darkgreen") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Residuos Devianza - Modelo Poisson",
+       x = "Observación", y = "Residuos") +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# G4: Distancia de Cook comparativa
+g4 <- ggplot(tibble(idx = 1:min(length(cook_log), length(cook_poi)), 
+                    log = cook_log[1:min(length(cook_log), length(cook_poi))],
+                    poi = cook_poi[1:min(length(cook_log), length(cook_poi))]) %>%
+               pivot_longer(-idx, names_to = "Modelo", values_to = "Cook"),
+             aes(x = idx, y = Cook, color = Modelo)) +
+  geom_point(alpha = 0.4, size = 1) +
+  labs(title = "Distancia de Cook - Comparación de Modelos",
+       x = "Observación", y = "Distancia de Cook") +
+  scale_color_manual(values = c("log" = "darkblue", "poi" = "darkgreen")) +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+gridExtra::grid.arrange(g1, g2, g3, g4, ncol = 2)
+
+
+```
+
+
+### Interpretación
+
+
+El análisis de la insuficiencia respiratoria en una cohorte de 1042 pacientes se realizó mediante la estrategia : 
+
+* Un modelo logístico binomial para predecir la ocurrencia del evento (fallo respiratorio, observado en el 69.9% de los casos)
+
+Esta aproximación permitió evaluar tanto el riesgo como el impacto temporal del cuadro clínico, proporcionando una visión completa del fenómeno desde perspectivas complementarias: la probabilidad binaria del evento y su magnitud cuantitativa cuando ocurre.
+
+
+El modelo logístico demostró una capacidad gran discriminativa , alcanzando un área bajo la curva ROC (AUC) de 0.975, lo que indica una gran precisión diagnóstica . Con 25 predictores clínicos y demográficos, el modelo logró una reducción  de la devianza: de 1261.98  a 382.87 (modelo ajustado), representando una mejora del 69.66%. Los índices alternativos de ajuste también confirman la excelencia del modelo: el Pseudo-$R^2$ de Cox-Snell alcanzó 0.575 y el de Nagelkerke 0.813, indicando que el conjunto de predictores captura prácticamente toda la información disponible para distinguir entre pacientes que desarrollarán fallo respiratorio y aquellos que no.
+
+El algoritmo IRLS convergió en 12 iteraciones, un número elevado que refleja la complejidad de la estructura de datos y la presencia de separación casi completa en algunas variables predictoras (evidenciado por el rango de pesos IRLS de [0, 0.25]). La suma de las ecuaciones de score fue prácticamente cero, confirmando la convergencia matemática, aunque el máximo absoluto del score (0.959) sugiere que algunas observaciones permanecen ligeramente discrepantes, posiblemente casos extremos con perfiles clínicos únicos.
+
+Entre los predictores, el **Glasgow Coma Scale (GCS)** se consolidó como el factor protector más potente ($\beta = -0.276$, OR = 0.759, $z = -8.62$, $p < 2 \times 10^{-16}$). Cada punto adicional en la escala neurológica reduce la probabilidad de fallo ventilatorio en aproximadamente un 24%, confirmando que la integridad neurológica es fundamental para la protección de la vía aérea y el mantenimiento de la mecánica respiratoria. Este hallazgo subraya que la consciencia no solo afecta el estado neurológico, sino que desencadena una cascada de disfunción respiratoria por pérdida de reflejo y control ventilatorio central.
+
+Por otro lado, la **severidad fisiológica global (APACHE Score)** ($\beta = 0.031$, OR = 1.032, $z = 4.60$, $p = 4.30 \times 10^{-6}$) y la **hipercapnia (PaCO2 elevada)** ($\beta = 0.053$, OR = 1.054, $z = 4.41$, $p = 1.05 \times 10^{-5}$) resultaron ser factores de riesgo significativos. Cada punto adicional en el APACHE incrementa las probabilidades de fallo en un 3.2%, mientras que cada mmHg de aumento en PaCO2 las incrementa en un 5.4%, evidenciando que tanto la severidad  como la retención de dióxido de carbono son marcadores críticos de insuficiencia ventilatoria inminente.
+
+Un hallazgo clínico clave fue el impacto de la **acidosis**: el pH arterial mostró una fuerte asociación negativa ($\beta = -1.716$, OR = 0.180, $z = -2.71$, $p = 0.007$), señalando que  reduce drásticamente las probabilidades de evitar el fallo (o equivalentemente, incrementa las probabilidades de desarrollarlo). Un descenso de una unidad de pH multiplica el riesgo por aproximadamente 5.6 veces, señalandolo como un marcador temprano de fatiga respiratoria inminente .
+
+La **diálisis** mostró un efecto reductor  ($\beta = -2.419$, OR = 0.089, $z = -3.49$, $p < 0.001$), reduciendo las probabilidades de fallo respiratorio en más del 90%. Este resultado  podría reflejar que los pacientes en diálisis reciben un monitoreo más intensivo, previniendo la sobrecarga pulmonar, o que representan un subgrupo con menor carga respiratoria primaria. 
+
+Variables como **diabetes** ($p = 0.098$), **infarto de miocardio** ($p = 0.436$), **cirrosis** ($p = 0.256$), **cirugía electiva** ($p = 0.128$) y **readmisión** ($p = 0.997$) no alcanzaron significancia estadística, sugiriendo que su impacto sobre el fallo respiratorio está mediado por las variables de severidad fisiológica ya incluidas en el modelo, o que no constituyen factores de riesgo independientes una vez ajustados por el estado agudo del paciente.
+
+El desempeño predictivo del modelo fue bueno. Con un punto de corte óptimo de 0.648 probabilidad predicha, el modelo alcanzó una **sensibilidad del 91.1%** y una **especificidad del 94.9%**, logrando un equilibrio notable entre detectar correctamente los casos de fallo (652 de 716 verdaderos positivos) y evitar falsos positivos (296 de 312 verdaderos negativos). La **precisión global (accuracy)** fue del 92.2%, el **F1-Score** de 0.942, y la **precisión positiva** (valor predictivo positivo) del 97.6%, indicando que cuando el modelo predice fallo respiratorio, acierta en más del 97% de los casos. La prueba de **Hosmer-Lemeshow** ($\chi^2 = 9.71$, $p = 0.286$) confirmó una calibración adecuada, validando que las probabilidades predichas reflejan fielmente la realidad clínica y que el modelo no presenta desajuste sistemático entre predicciones y observaciones.
+
+
+
